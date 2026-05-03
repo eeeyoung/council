@@ -5,13 +5,16 @@ description = "COUNCIL — Multi-Agent Scientific Brainstorming Framework"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiofiles>=24.1",
     "chromadb>=1.1.1",
     "crewai[tools]>=0.100",
+    "fastapi>=0.115",
     "pydantic>=2.12.5",
     "pypdf>=6.10.2",
     "python-dotenv>=1.2.2",
     "rich>=14.3.4",
     "tavily-python>=0.7.24",
+    "uvicorn[standard]>=0.34",
 ]
 
 [project.scripts]

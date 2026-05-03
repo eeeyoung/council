@@ -253,6 +253,7 @@ def main() -> None:
         with open(panel_file, "w", encoding="utf-8") as f:
             json.dump([e.model_dump() for e in state.experts], f, indent=2)
         console.print(f"[bold green]✓ Expert panel saved to:[/bold green] [cyan]{panel_file}[/cyan]")
+        _write_manifest(state, out_dir)
 
         console.print()
         console.print(Rule("[bold cyan]Phase A Complete[/bold cyan]", style="cyan"))
@@ -284,6 +285,7 @@ def main() -> None:
                 f.write(text)
         
         console.print(f"[bold green]✓ Research summaries saved to:[/bold green] [cyan]{out_dir}[/cyan]")
+        _write_manifest(state, out_dir)
         console.print()
         console.print(Rule("[bold cyan]Phase B Complete[/bold cyan]", style="cyan"))
         console.print()
@@ -322,6 +324,7 @@ def main() -> None:
 
                 console.print(f"[bold green]✓ Saved transcript:[/bold green] [cyan]{transcript_file}[/cyan]")
                 console.print(f"[bold green]✓ Saved scorecard:[/bold green] [cyan]{scorecard_file}[/cyan]")
+                _write_manifest(state, out_dir)
                 console.print(Rule("[bold cyan]Phase C Complete[/bold cyan]", style="cyan"))
                 console.print()
 
@@ -335,7 +338,8 @@ def main() -> None:
                     with open(consensus_file, "w", encoding="utf-8") as f:
                         f.write(f"# Phase D Consensus Draft (Session {state.session_id} - Round {state.audit_round})\n\n")
                         f.write(state.synthesis)
-                
+                    _write_manifest(state, out_dir)
+
                 console.print(Rule("[bold magenta]Phase D Complete[/bold magenta]", style="magenta"))
                 console.print()
     elif state.status in ("debating", "auditing"):
@@ -359,6 +363,7 @@ def main() -> None:
             f.write(state.dossier_path or "")
 
         console.print(f"[bold green]✓ Final dossier saved to:[/bold green] [cyan]{dossier_file}[/cyan]")
+        _write_manifest(state, out_dir)
         console.print(Rule("[bold blue]Phase E Complete[/bold blue]", style="blue"))
         console.print()
     elif state.status == "dossier":
@@ -368,6 +373,88 @@ def main() -> None:
     # Final Rich TUI Session Summary (Director's Console recap)
     # ------------------------------------------------------------------ #
     _print_session_summary(state, out_dir)
+
+
+def _write_manifest(state: "CouncilState", out_dir: Path) -> None:
+    """Write/update outputs/{session_id}_manifest.json for GUI consumption."""
+    import json
+
+    experts = []
+    for i, e in enumerate(state.experts):
+        expert_id = e.name.replace(".", "").replace(" ", "_").lower()
+        experts.append({
+            "id": expert_id,
+            "name": e.name,
+            "discipline": e.discipline,
+            "bias": e.bias,
+            "persona_prompt": e.persona_prompt,
+            "color_index": i,
+        })
+
+    research_files: list[dict] = []
+    for expert in experts:
+        f = out_dir / f"{state.session_id}_research_{expert['id']}.md"
+        if f.exists():
+            research_files.append({
+                "expert_id": expert["id"],
+                "expert_name": expert["name"],
+                "file": f.name,
+            })
+    agg = out_dir / f"{state.session_id}_research___aggregation__.md"
+    if agg.exists():
+        research_files.append({
+            "expert_id": "__aggregation__",
+            "expert_name": "Aggregator Summary",
+            "file": agg.name,
+        })
+
+    rounds: list[dict] = []
+    for r in range(state.max_audit_rounds + 2):
+        t = out_dir / f"{state.session_id}_transcript_r{r}.md"
+        s = out_dir / f"{state.session_id}_scorecard_r{r}.md"
+        c = out_dir / f"{state.session_id}_consensus_r{r + 1}.md"
+        if t.exists() or s.exists():
+            rounds.append({
+                "round": r,
+                "transcript": t.name if t.exists() else None,
+                "scorecard": s.name if s.exists() else None,
+                "consensus": c.name if c.exists() else None,
+            })
+
+    panel = out_dir / f"{state.session_id}_panel.json"
+    dossier = out_dir / f"{state.session_id}_dossier.md"
+
+    phases_complete: list[str] = []
+    if panel.exists():
+        phases_complete.append("A")
+    if research_files:
+        phases_complete.append("B")
+    if rounds:
+        phases_complete.append("C")
+    if any(r.get("consensus") for r in rounds):
+        phases_complete.append("D")
+    if dossier.exists():
+        phases_complete.append("E")
+
+    manifest = {
+        "session_id": state.session_id,
+        "query": state.query,
+        "status": state.status,
+        "created_at": state.created_at.isoformat(),
+        "experts": experts,
+        "audit_rounds": len(rounds),
+        "files": {
+            "panel": panel.name if panel.exists() else None,
+            "research": research_files,
+            "rounds": rounds,
+            "dossier": dossier.name if dossier.exists() else None,
+        },
+        "phases_complete": phases_complete,
+    }
+
+    manifest_path = out_dir / f"{state.session_id}_manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
 
 
 def _print_session_summary(state: "CouncilState", out_dir: Path) -> None:
