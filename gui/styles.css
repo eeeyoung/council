@@ -1527,3 +1527,115 @@ body {
 .toast-info {
     border-color: rgba(6, 182, 212, 0.3);
 }
+
+/* ─── Live research entries ─────────────────────────────────────────────── */
+
+.live-research-entry,
+.live-research-card {
+    padding: 16px 18px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    transition: border-color 0.4s, background 0.4s;
+}
+
+.live-research-entry.researching,
+.live-research-card.researching {
+    border-color: rgba(234, 179, 8, 0.3);
+    background: rgba(234, 179, 8, 0.04);
+}
+
+.live-research-entry.research-done,
+.live-research-card.research-done {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.04);
+}
+
+.live-research-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.live-research-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    font-size: 14px;
+}
+
+.live-research-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(234, 179, 8, 0.3);
+    border-top: 2px solid #eab308;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.live-research-check {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #22c55e;
+    font-weight: 700;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.live-research-disc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.live-research-status {
+    font-size: 13px;
+    color: #eab308;
+    margin-left: 26px;
+    font-style: italic;
+}
+
+.research-done .live-research-status {
+    color: #22c55e;
+    font-style: normal;
+}
+
+.live-research-summary {
+    margin-top: 14px;
+    margin-left: 26px;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 3px solid #22c55e;
+    border-radius: 0 6px 6px 0;
+    font-size: 13px;
+    line-height: 1.6;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* ─── Verdict banner (live audit) ───────────────────────────────────────── */
+
+.verdict-banner {
+    padding: 12px 20px;
+    border-radius: 10px;
+    margin: 12px 0;
+    font-weight: 600;
+    font-size: 14px;
+    text-align: center;
+}
+
+.verdict-approved {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    color: #22c55e;
+}
+
+.verdict-rejected {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+}

@@ -5,8 +5,9 @@ moderator_curation:
     "{query}"
 
     Your task is to design the optimal expert panel to investigate this question.
-    Generate between 3 and {max_experts} expert personas. Each expert must bring
-    a genuinely distinct disciplinary perspective. Avoid redundancy.
+    Generate exactly {max_experts} expert personas. Each expert must bring
+    a genuinely distinct disciplinary perspective. Avoid redundancy. Do not
+    generate fewer than {max_experts} experts.
 
     Respond with ONLY a valid JSON array with no surrounding text or markdown.
     Each object must have these exact fields:

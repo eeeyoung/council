@@ -4,6 +4,12 @@
 let currentSession    = null;  // manifest object from /api/sessions/{id}
 let currentAnimationId = 0;
 
+// Live-mode data stores (populated by SSE events)
+let _liveResearch = {};        // {expert_id: {name, discipline, status:'researching'|'done', summary}}
+let _liveDebateMessages = [];  // [{name, discipline, round, content, turn}]
+let _liveCurrentRound  = 0;
+let _liveSSE = null;           // active EventSource, if any
+
 // When the GUI is served by council.server (port 8000) this is ''.
 // Override to 'http://localhost:8000' if you serve the GUI from a different origin.
 const API_BASE = '';
@@ -14,7 +20,7 @@ const EXPERT_COLOR_CLASSES = ['expert-cyan', 'expert-magenta', 'expert-green', '
 const CLAIM_COLOR_CLASSES  = ['claim-cyan',  'claim-magenta',  'claim-green',  'claim-default'];
 
 function _expertEntry(name) {
-    return currentSession?.experts.find(e => e.name === name) ?? null;
+    return currentSession?.experts?.find(e => e.name === name) ?? null;
 }
 function expertColorClass(name) {
     const idx = _expertEntry(name)?.color_index ?? 3;
@@ -179,7 +185,27 @@ async function loadSession(sessionId) {
 }
 
 function startNewSession() {
+    // Close any active SSE connection
+    if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
+
     currentSession = null;
+    _liveResearch = {};
+    _liveDebateMessages = [];
+    _liveCurrentRound = 0;
+
+    if (window.SERVER_MODE === 'live') {
+        panelWizardState.query = '';
+        panelWizardState.experts = [];
+        panelWizardState.sessionId = null;
+        panelWizardState.step = 1;
+        panelWizardState.dirty = false;
+        panelWizardState.visited = new Set([1]);
+        const badge = document.getElementById('session-badge-text');
+        if (badge) badge.textContent = 'No session loaded';
+        switchPhase('panel');
+        return;
+    }
+
     const badge = document.getElementById('session-badge-text');
     if (badge) badge.textContent = 'No session loaded';
     renderSessionPicker();
@@ -323,7 +349,7 @@ function _renderStep2() {
                 <div class="panel-action-group panel-action-right">
                     <div class="panel-regen-group">
                         <button class="panel-btn panel-btn-secondary" onclick="regeneratePanel()">⟳ Regenerate with</button>
-                        <input type="number" id="regen-count" class="panel-spinbox" value="${experts.length || 5}" min="2" max="8" />
+                        <input type="number" id="regen-count" class="panel-spinbox" value="${experts.length || 5}" min="2" max="6" />
                         <span class="panel-spinbox-label">experts</span>
                     </div>
                     <button class="panel-btn panel-btn-polish" id="polish-btn" onclick="polishPanel()" ${panelWizardState.dirty ? '' : 'disabled'}>
@@ -424,12 +450,25 @@ async function _liveGeneratePanel(query, expertCount) {
 
     const data = await res.json();
     panelWizardState.sessionId = data.session_id;
-    panelWizardState.experts = data.experts.map(e => ({
+    panelWizardState.experts = data.experts.map((e, i) => ({
         name:           e.name,
         discipline:     e.discipline || '',
         bias:           e.bias || '',
         persona_prompt: e.persona_prompt || '',
     }));
+
+    // Build minimal currentSession so expertColorClass/Phase views work in live mode
+    currentSession = {
+        session_id: data.session_id,
+        query:      data.query,
+        status:     'live',
+        experts:    data.experts.map((e, i) => ({
+            name: e.name, discipline: e.discipline, color_index: i,
+        })),
+        files: { panel: null, research: null, rounds: null, dossier: null },
+        phases_complete: ['A'],
+    };
+
     panelWizardState.dirty = false;
     panelWizardState.step = 2;
     panelWizardState.visited.add(2);
@@ -564,6 +603,13 @@ window.proceedPanel = async function () {
 // ─── Phase B: Research Library ────────────────────────────────────────────────
 
 async function renderResearchPhase() {
+    // Live mode: render from accumulated SSE research data
+    if (Object.keys(_liveResearch).length > 0 || _liveSSE) {
+        _renderLiveResearchPhase();
+        return;
+    }
+
+    // Review mode: render from files
     const researchFiles = currentSession?.files?.research ?? [];
     if (!researchFiles.length) {
         contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">No research files available for this session.</p>';
@@ -610,6 +656,52 @@ async function renderResearchPhase() {
     contentBody.innerHTML = tabsHtml + '</div>' + contentHtml + '</div>';
 }
 
+function _renderLiveResearchPhase() {
+    const entries = Object.values(_liveResearch);
+    if (!entries.length) {
+        contentBody.innerHTML = `
+            <div style="text-align:center;padding:60px 0;">
+                <div class="loading-spinner"></div>
+                <p style="margin-top:20px;color:var(--text-muted);">Initialising research phase…</p>
+            </div>`;
+        return;
+    }
+
+    const cards = entries.map((r, i) => {
+        const spinning = r.status === 'researching';
+        const statusIcon = spinning
+            ? '<span class="live-research-spinner"></span>'
+            : '<span class="live-research-check">✓</span>';
+        const statusText = spinning ? 'Searching the literature…' : 'Research complete';
+        const cardClass = spinning ? 'researching' : 'research-done';
+        const summaryHtml = (!spinning && r.summary)
+            ? `<div class="live-research-summary markdown-content">${marked.parse(r.summary)}</div>`
+            : '';
+
+        return `
+            <div class="live-research-card ${cardClass}">
+                <div class="live-research-header">
+                    ${statusIcon}
+                    <strong>${_esc(r.name)}</strong>
+                    <span class="live-research-disc">${_esc(r.discipline)}</span>
+                </div>
+                <div class="live-research-status">${statusText}</div>
+                ${summaryHtml}
+            </div>`;
+    }).join('');
+
+    const allDone = entries.every(r => r.status === 'done');
+    const headerMsg = allDone
+        ? `<p style="color:#22c55e;margin-bottom:20px;">✓ All ${entries.length} experts have completed their research.</p>`
+        : `<p style="color:var(--text-muted);margin-bottom:20px;">Experts are researching in parallel — results appear as they complete.</p>`;
+
+    contentBody.innerHTML = `
+        <div style="padding:8px 0;">
+            ${headerMsg}
+            <div class="live-research-grid">${cards}</div>
+        </div>`;
+}
+
 window.switchSubTab = function (index) {
     document.querySelectorAll('.sub-tab-btn').forEach((btn, i) => btn.classList.toggle('active', i === index));
     document.querySelectorAll('.sub-tab-pane').forEach((pane, i) => { pane.style.display = i === index ? 'block' : 'none'; });
@@ -618,6 +710,13 @@ window.switchSubTab = function (index) {
 // ─── Phase C: The Live Symposium ──────────────────────────────────────────────
 
 async function renderDebatePhase() {
+    // Live mode: render from accumulated live debate messages
+    if (_liveDebateMessages.length > 0 || _liveSSE) {
+        _renderLiveDebatePhase();
+        return;
+    }
+
+    // Review mode: render from transcript files
     const animId = currentAnimationId;
     const rounds = currentSession?.files?.rounds ?? [];
 
@@ -639,6 +738,58 @@ async function renderDebatePhase() {
 
         await _animateTranscript(text, animId, chatContainer, roundInfo.round);
     }
+}
+
+function _renderLiveDebatePhase() {
+    const msgs = _liveDebateMessages;
+    if (!msgs.length) {
+        contentBody.innerHTML = `
+            <div style="text-align:center;padding:60px 0;">
+                <div class="loading-spinner"></div>
+                <p style="margin-top:20px;color:var(--text-muted);">Waiting for the symposium to begin…</p>
+            </div>`;
+        return;
+    }
+
+    // Render all accumulated messages into the chat container
+    let html = '<div class="chat-container" id="chat-container">';
+    let lastRound = 0;
+
+    for (const msg of msgs) {
+        // Round divider
+        if (msg.round !== lastRound) {
+            lastRound = msg.round;
+            html += `<div class="round-divider"><span>── Round ${msg.round} ──</span></div>`;
+        }
+
+        const isHost = msg.name === 'Host A' || msg.name === 'Host B';
+        const colorCls = isHost
+            ? (msg.name === 'Host A' ? 'host-a' : 'host-b')
+            : expertColorClass(msg.name);
+        const sideCls = isHost ? 'message-right' : '';
+        const avatar = isHost
+            ? (msg.name === 'Host A' ? '⚖' : '🔬')
+            : msg.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
+
+        html += `
+            <div class="chat-message ${sideCls} ${colorCls}">
+                <div class="chat-avatar">${_esc(avatar)}</div>
+                <div class="chat-bubble-wrapper">
+                    <div class="chat-header">
+                        <strong>${_esc(msg.name)}</strong>
+                        <span>${_esc(msg.discipline || '')}</span>
+                    </div>
+                    <div class="chat-bubble markdown-content">${marked.parse(msg.content)}</div>
+                </div>
+            </div>`;
+    }
+
+    html += '</div>';
+    contentBody.innerHTML = html;
+
+    // Scroll to bottom
+    const chat = document.getElementById('chat-container');
+    if (chat) chat.scrollTop = chat.scrollHeight;
 }
 
 async function _animateTranscript(text, animId, chatContainer, roundIndex) {
@@ -750,7 +901,17 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 // ─── Phase D: Evidence Scorecard ─────────────────────────────────────────────
 
 async function renderScorecardPhase() {
+    // Live mode: data not yet written to files
+    if (_liveSSE) {
+        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Evidence scorecard will appear after the symposium completes.</p>';
+        return;
+    }
+
     const rounds = currentSession?.files?.rounds ?? [];
+    if (!rounds.length) {
+        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">No scorecard available for this session.</p>';
+        return;
+    }
     const lastRound = [...rounds].reverse().find(r => r.scorecard);
 
     if (!lastRound?.scorecard) {
@@ -815,6 +976,12 @@ async function renderScorecardPhase() {
 // ─── Phase E: Final Dossier ───────────────────────────────────────────────────
 
 async function renderDossierPhase() {
+    // Live mode: dossier not yet compiled
+    if (_liveSSE) {
+        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Dossier is being compiled — it will appear here when ready.</p>';
+        return;
+    }
+
     const dossierFile = currentSession?.files?.dossier;
     if (!dossierFile) {
         contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">Dossier not yet generated for this session.</p>';
@@ -888,162 +1055,193 @@ async function renderDossierPhase() {
 // ─── Live SSE connection ──────────────────────────────────────────────────────
 
 function _connectLiveSSE(sessionId) {
-    _renderLiveDashboard();
+    // Initialize live data stores
+    _liveResearch = {};
+    _liveDebateMessages = [];
+    _liveCurrentRound = 0;
+    _liveSSE = new EventSource(`${API_BASE}/api/sessions/${sessionId}/live`);
 
-    const eventSource = new EventSource(`${API_BASE}/api/sessions/${sessionId}/live`);
-    window._currentEventSource = eventSource;
-    window._livePhase = 'Starting';
-
-    eventSource.addEventListener('session_start', (e) => {
+    _liveSSE.addEventListener('session_start', (e) => {
         const data = JSON.parse(e.data);
-        showToast(`Session ${data.session_id} started`, 'info');
+        showToast(`Session started — Phase B begins`, 'info');
     });
 
-    eventSource.addEventListener('phase_start', (e) => {
+    _liveSSE.addEventListener('phase_start', (e) => {
         const data = JSON.parse(e.data);
-        const labels = { B: 'Research', C: 'Symposium', D: 'Audit', E: 'Dossier' };
-        window._livePhase = data.phase;
-        _updateLivePhase(data.phase, labels[data.phase] || data.phase);
-    });
-
-    eventSource.addEventListener('research_complete', (e) => {
-        const data = JSON.parse(e.data);
-        _appendLiveEvent('research',
-            `<strong>${_esc(data.expert_name)}</strong> research complete`);
-        showToast(`${data.expert_name} finished researching`, 'info');
-    });
-
-    eventSource.addEventListener('round_start', (e) => {
-        const data = JSON.parse(e.data);
-        _appendLiveDivider(`Round ${data.round}`);
-        showToast(`Round ${data.round} started`, 'info');
-    });
-
-    eventSource.addEventListener('debate_message', (e) => {
-        const data = JSON.parse(e.data);
-        _appendLiveDebateMessage(data);
-    });
-
-    eventSource.addEventListener('scorecard_ready', () => {
-        _appendLiveEvent('scorecard', 'Evidence scorecard compiled');
-    });
-
-    eventSource.addEventListener('audit_result', (e) => {
-        const data = JSON.parse(e.data);
-        const verdict = data.approved ? '✓ APPROVED — Consensus reached'
-                                       : '✗ REJECTED — Additional round needed';
-        _appendLiveEvent(data.approved ? 'audit-approved' : 'audit-rejected', verdict);
-        if (data.issues && data.issues.length) {
-            data.issues.forEach(issue => _appendLiveEvent('audit-issue', `- ${issue}`));
+        if (data.phase === 'C') {
+            switchPhase('debate');
+            showToast('Symposium begins — experts are debating', 'info');
+        } else if (data.phase === 'E') {
+            switchPhase('dossier');
+            showToast('Compiling final dossier', 'info');
+        }
+        // Mark phase as active in the current session
+        if (currentSession && currentSession.phases_complete) {
+            if (!currentSession.phases_complete.includes(data.phase)) {
+                currentSession.phases_complete.push(data.phase);
+            }
         }
     });
 
-    eventSource.addEventListener('dossier_chunk', (e) => {
+    _liveSSE.addEventListener('research_start', (e) => {
         const data = JSON.parse(e.data);
-        _appendDossierChunk(data.chunk);
+        _liveResearch[data.expert_id] = {
+            name: data.expert_name,
+            discipline: data.discipline || '',
+            status: 'researching',
+            summary: '',
+        };
+        _refreshResearchPhase();
     });
 
-    eventSource.addEventListener('phase_complete', (e) => {
+    _liveSSE.addEventListener('research_complete', (e) => {
+        const data = JSON.parse(e.data);
+        if (_liveResearch[data.expert_id]) {
+            _liveResearch[data.expert_id].status = 'done';
+            _liveResearch[data.expert_id].summary = data.summary || '';
+        }
+        _refreshResearchPhase();
+        showToast(`${data.expert_name} finished researching`, 'info');
+    });
+
+    _liveSSE.addEventListener('phase_complete', (e) => {
         const data = JSON.parse(e.data);
         showToast(`Phase ${data.phase} complete`, 'success');
+        // Update phases_complete for live session
+        if (currentSession && currentSession.phases_complete) {
+            if (!currentSession.phases_complete.includes(data.phase)) {
+                currentSession.phases_complete.push(data.phase);
+            }
+        }
     });
 
-    eventSource.addEventListener('session_complete', (e) => {
+    _liveSSE.addEventListener('round_start', (e) => {
         const data = JSON.parse(e.data);
-        eventSource.close();
-        window._currentEventSource = null;
-        _updateLivePhase('Done', 'Session Complete');
-        _appendLiveEvent('complete', `Symposium finished. Loading results…`);
-        showToast('Session complete! Loading results…', 'success');
-
-        // Load the completed session for browsing
-        setTimeout(() => {
-            window.SERVER_MODE = 'review';  // switch to browse mode
-            loadSession(data.session_id);
-        }, 2000);
+        _liveCurrentRound = data.round;
+        showToast(`Round ${data.round} started`, 'info');
     });
 
-    eventSource.onerror = () => {
-        if (eventSource.readyState === EventSource.CLOSED) {
-            window._currentEventSource = null;
+    _liveSSE.addEventListener('debate_typing', (e) => {
+        const data = JSON.parse(e.data);
+        _renderDebateTyping(data);
+    });
+
+    _liveSSE.addEventListener('debate_message', (e) => {
+        const data = JSON.parse(e.data);
+        _renderDebateTyping(null); // remove typing indicator
+        _liveDebateMessages.push(data);
+        _renderDebateMessage(data);
+    });
+
+    _liveSSE.addEventListener('scorecard_ready', () => {
+        showToast('Evidence scorecard compiled', 'success');
+    });
+
+    _liveSSE.addEventListener('audit_result', (e) => {
+        const data = JSON.parse(e.data);
+        const verdict = data.approved
+            ? '✓ Consensus APPROVED'
+            : '✗ REJECTED — another round needed';
+        _renderAuditVerdict(verdict, data.approved);
+        showToast(verdict, data.approved ? 'success' : 'error');
+    });
+
+    _liveSSE.addEventListener('dossier_chunk', () => {
+        // Dossier chunks accumulate during Phase E; after session_complete
+        // the full session loads and Phase E renders from files.
+    });
+
+    _liveSSE.addEventListener('session_complete', (e) => {
+        const data = JSON.parse(e.data);
+        _liveSSE.close();
+        _liveSSE = null;
+        showToast('Session complete! Loading results…', 'success');
+        // Load the completed session so all phases are browsable from files
+        setTimeout(() => loadSession(data.session_id), 1500);
+    });
+
+    _liveSSE.onerror = () => {
+        if (_liveSSE && _liveSSE.readyState === EventSource.CLOSED) {
+            _liveSSE = null;
             return;
         }
         showToast('Live connection interrupted. The pipeline continues on the server.', 'error');
     };
+
+    // Navigate to Phase B — it will render the live research view
+    switchPhase('research');
 }
 
-// ─── Live dashboard DOM ─────────────────────────────────────────────────────
+// ─── Live debate DOM helpers ────────────────────────────────────────────────
 
-function _renderLiveDashboard() {
-    contentBody.innerHTML = `
-        <div class="live-dashboard">
-            <div class="live-header">
-                <div class="live-phase-row">
-                    <div class="live-pulse" id="live-pulse"></div>
-                    <span id="live-phase-label" class="live-phase-label">Starting session…</span>
-                </div>
-                <div class="live-progress-track">
-                    <div class="live-progress-fill" id="live-progress" style="width:0%;"></div>
-                </div>
-            </div>
-            <div class="live-log" id="live-log"></div>
-        </div>`;
-}
-
-function _updateLivePhase(phaseCode, label) {
-    const phaseEl = document.getElementById('live-phase-label');
-    if (phaseEl) phaseEl.textContent = `Phase ${phaseCode}: ${label}`;
-    const progress = document.getElementById('live-progress');
-    if (progress) {
-        const widths = { B: '20%', C: '50%', D: '70%', E: '85%', Done: '100%' };
-        progress.style.width = widths[phaseCode] || '5%';
-    }
-}
-
-function _appendLiveEvent(type, message) {
-    const log = document.getElementById('live-log');
-    if (!log) return;
+function _renderDebateTyping(data) {
+    const chat = document.getElementById('chat-container');
+    if (!chat) return;
+    // Remove previous typing indicator
+    const prev = document.getElementById('typing-indicator');
+    if (prev) prev.remove();
+    if (!data) return;
     const div = document.createElement('div');
-    div.className = `live-event live-event-${type}`;
-    div.innerHTML = message;
-    log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
-}
-
-function _appendLiveDebateMessage(data) {
-    const log = document.getElementById('live-log');
-    if (!log) return;
-    const name = _esc(data.name);
+    div.id = 'typing-indicator';
+    div.className = 'chat-indicator';
     const isHost = data.name === 'Host A' || data.name === 'Host B';
-    const colorCls = isHost ? hostColorClass(data.name === 'Host A' ? '[HOST-A]' : '[HOST-B]')
-                            : expertColorClass(data.name);
-    const div = document.createElement('div');
-    div.className = `live-debate-msg ${colorCls}`;
-    div.innerHTML = `<strong>${name}</strong>
-        <span class="live-debate-meta">${_esc(data.discipline || '')}</span>
-        <div class="chat-bubble markdown-content" style="margin-top:8px;">${marked.parse(data.content)}</div>`;
-    log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
+    div.innerHTML = isHost
+        ? `<strong>${_esc(data.name)}</strong> is drafting<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
+        : `<strong>${_esc(data.name)}</strong> is formulating<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
 }
 
-function _appendLiveDivider(text) {
-    const log = document.getElementById('live-log');
-    if (!log) return;
-    const div = document.createElement('div');
-    div.className = 'round-divider';
-    div.innerHTML = `<span>── ${text} ──</span>`;
-    log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
+function _renderDebateMessage(data) {
+    const chat = document.getElementById('chat-container');
+    if (!chat) return;
+    const isHost = data.name === 'Host A' || data.name === 'Host B';
+    const colorCls = isHost
+        ? (data.name === 'Host A' ? 'host-a' : 'host-b')
+        : expertColorClass(data.name);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `chat-message ${isHost ? 'message-right ' + colorCls : colorCls}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'chat-avatar';
+    avatar.textContent = isHost
+        ? (data.name === 'Host A' ? '⚖' : '🔬')
+        : data.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
+
+    const bubbleWrap = document.createElement('div');
+    bubbleWrap.className = 'chat-bubble-wrapper';
+
+    const header = document.createElement('div');
+    header.className = 'chat-header';
+    header.innerHTML = `<strong>${_esc(data.name)}</strong> <span>${isHost ? 'Round ' + _liveCurrentRound : _esc(data.discipline || '')}</span>`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble markdown-content';
+    bubble.innerHTML = marked.parse(data.content);
+
+    bubbleWrap.append(header, bubble);
+    isHost ? wrapper.append(bubbleWrap, avatar) : wrapper.append(avatar, bubbleWrap);
+    chat.appendChild(wrapper);
+    chat.scrollTop = chat.scrollHeight;
 }
 
-function _appendDossierChunk(chunk) {
-    const log = document.getElementById('live-log');
-    if (!log) return;
+function _renderAuditVerdict(verdict, approved) {
+    const chat = document.getElementById('chat-container');
+    if (!chat) return;
     const div = document.createElement('div');
-    div.className = 'live-dossier-chunk markdown-content';
-    div.innerHTML = marked.parse(chunk);
-    log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
+    div.className = `verdict-banner ${approved ? 'verdict-approved' : 'verdict-rejected'}`;
+    div.textContent = verdict;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function _refreshResearchPhase() {
+    // Only re-render if we're currently on the research phase
+    const activeBtn = document.querySelector('.nav-btn.active');
+    if (activeBtn && activeBtn.dataset.phase === 'research') {
+        _renderLiveResearchPhase();
+    }
 }
 
 // ─── Toast notifications ────────────────────────────────────────────────────

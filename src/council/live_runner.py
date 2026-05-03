@@ -35,21 +35,33 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
     # ── Phase B: Parallel Research ─────────────────────────────────────────
     yield "phase_start", {"phase": "B"}
 
+    # Announce each expert before research begins
+    for expert in state.experts:
+        expert_id = _safe_id(expert.name)
+        yield "research_start", {
+            "expert_id": expert_id,
+            "expert_name": expert.name,
+            "discipline": expert.discipline,
+        }
+        await asyncio.sleep(0.15)
+
     from council.crews.research_crew import run_research
 
     state = await asyncio.to_thread(run_research, state, None, False)
     save_state(state)
 
-    # Emit research_complete for each expert
+    # Emit research_complete for each expert with full summary
     for expert in state.experts:
         summary = state.research_summaries.get(expert.name, "")
         expert_id = _safe_id(expert.name)
+        # Truncate long summaries for the SSE event (full text saved to file anyway)
+        preview = summary[:600] + "…" if len(summary) > 600 else summary
         yield "research_complete", {
             "expert_id": expert_id,
             "expert_name": expert.name,
-            "summary": summary,
+            "summary": preview,
         }
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.15)
 
     # Write research output files
     for key, text in state.research_summaries.items():
@@ -77,17 +89,27 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             state = await asyncio.to_thread(run_debate, state, None, False)
             save_state(state)
 
-            # Emit only the new debate messages from this round
+            # Emit only the new messages from this round (debate + host entries)
             for entry in state.transcript[prev_len:]:
-                if entry.phase == "debate":
+                if entry.phase in ("debate", "audit"):
+                    name = entry.agent_name
+                    discipline = entry.discipline
+                    # Typing indicator
+                    yield "debate_typing", {
+                        "name": name,
+                        "discipline": discipline,
+                        "round": round_num,
+                    }
+                    await asyncio.sleep(1.0)
+                    # Full message
                     yield "debate_message", {
-                        "name": entry.agent_name,
-                        "discipline": entry.discipline,
+                        "name": name,
+                        "discipline": discipline,
                         "round": round_num,
                         "content": entry.speech,
                         "turn": entry.turn,
                     }
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.5)
 
             # Write transcript and scorecard files for this round
             r = state.audit_round

@@ -302,7 +302,7 @@ async def session_events(session_id: str) -> StreamingResponse:
 
 class GeneratePanelRequest(BaseModel):
     query: str = Field(..., min_length=10, description="Research question")
-    expert_count: int = Field(default=5, ge=2, le=8, description="Number of experts")
+    expert_count: int = Field(default=5, ge=2, le=6, description="Number of experts")
 
 
 class ProceedRequest(BaseModel):
