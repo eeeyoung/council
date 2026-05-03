@@ -77,7 +77,7 @@ def run_audit_loop(
     desc_a = cfg_a["description"].format(
         query=state.query,
         transcript=state.transcript_text,
-        scorecard=state.evidence_scorecard_text,
+        evidence_scorecard=state.evidence_scorecard_text,
     )
     task_a = Task(
         description=desc_a,
@@ -89,8 +89,8 @@ def run_audit_loop(
     cfg_b = tasks_cfg["host_b_review"]
     desc_b = cfg_b["description"].format(
         query=state.query,
-        transcript=state.transcript_text,
-        scorecard=state.evidence_scorecard_text,
+        synthesis="",
+        evidence_scorecard=state.evidence_scorecard_text,
     )
     task_b = Task(
         description=desc_b,
@@ -118,14 +118,22 @@ def run_audit_loop(
     tasks_output = getattr(result, "tasks_output", [])
     if len(tasks_output) > 0:
         a_out = tasks_output[0].raw if hasattr(tasks_output[0], "raw") else str(tasks_output[0])
-        state.consensus_draft = a_out
+        state.synthesis = a_out
 
     b_out = result.raw if hasattr(result, "raw") else str(result)
 
-    # Append host outputs to the shared transcript so the GUI can render them
-    state.transcript_text += (
-        f"[HOST-A] **Synthesis Host** (Round {state.audit_round}):\n{a_out}\n\n"
-        f"[HOST-B] **Hostile Peer Reviewer** (Round {state.audit_round}):\n{b_out}\n\n"
+    # Append host outputs to the transcript so the GUI can render them
+    state.add_transcript_entry(
+        agent_name="Host A",
+        discipline="Synthesis Host",
+        speech=a_out,
+        phase="audit",
+    )
+    state.add_transcript_entry(
+        agent_name="Host B",
+        discipline="Hostile Peer Reviewer",
+        speech=b_out,
+        phase="audit",
     )
 
     approved, mandate = _parse_host_b_output(b_out)
@@ -136,6 +144,15 @@ def run_audit_loop(
         state.conflict_mandate = ""
     else:
         state.audit_round += 1
+        if state.audit_round >= state.max_audit_rounds:
+            console.print(
+                f"[yellow]Maximum audit rounds ({state.max_audit_rounds}) reached.[/yellow] "
+                f"[bold]Symposium halted.[/bold]"
+            )
+            state.status = "dossier"
+            state.conflict_mandate = ""
+            return state
+
         console.print(f"[bold red]✗  Host B REJECTED the consensus (Round {state.audit_round}).[/bold red]")
         console.print(f"[yellow]Mandate for next round:[/yellow] {mandate}\n")
         state.status = "debating"

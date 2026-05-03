@@ -330,11 +330,11 @@ def main() -> None:
                 state = run_audit_loop(state, console=console, verbose=args.verbose)
                 save_state(state)
                 
-                if state.consensus_draft:
+                if state.synthesis:
                     consensus_file = out_dir / f"{state.session_id}_consensus_r{state.audit_round}.md"
                     with open(consensus_file, "w", encoding="utf-8") as f:
                         f.write(f"# Phase D Consensus Draft (Session {state.session_id} - Round {state.audit_round})\n\n")
-                        f.write(state.consensus_draft)
+                        f.write(state.synthesis)
                 
                 console.print(Rule("[bold magenta]Phase D Complete[/bold magenta]", style="magenta"))
                 console.print()

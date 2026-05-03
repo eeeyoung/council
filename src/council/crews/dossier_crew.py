@@ -71,7 +71,7 @@ def run_dossier(
     )
     desc_dos = cfg_dos["description"].format(
         query=state.query,
-        synthesis=state.consensus_draft or "(No synthesis available)",
+        synthesis=state.synthesis or "(No synthesis available)",
         evidence_scorecard=state.evidence_scorecard_text,
         transcript=state.transcript_text,
         audit_round=state.audit_round,

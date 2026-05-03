@@ -145,7 +145,7 @@ host_a_synthesis:
     
     But try to reach a consensus if possible, highlighting the points of agreement.
 
-host_b_audit:
+host_b_review:
   description: >
     Research Question: "{query}"
 
