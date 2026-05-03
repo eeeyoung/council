@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COUNCIL: Mission Control</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Highlight.js for code blocks in Markdown -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- Background Decoration -->
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <div class="app-container">
+        
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h1>COUNCIL</h1>
+                <p class="subtitle">Multi-Agent Brainstorming</p>
+                <div class="session-badge">
+                    <span class="dot"></span>
+                    <span>Session: ba71cf60 (MOCK)</span>
+                </div>
+            </div>
+
+            <ul class="nav-links">
+                <li>
+                    <button class="nav-btn active" data-phase="panel" onclick="switchPhase('panel')">
+                        <span class="icon">👥</span> Phase A: The Panel
+                    </button>
+                </li>
+                <li>
+                    <button class="nav-btn" data-phase="research" onclick="switchPhase('research')">
+                        <span class="icon">📚</span> Phase B: Research Library
+                    </button>
+                </li>
+                <li>
+                    <button class="nav-btn" data-phase="debate" onclick="switchPhase('debate')">
+                        <span class="icon">💬</span> Phase C: The Symposium
+                    </button>
+                </li>
+                <li>
+                    <button class="nav-btn" data-phase="scorecard" onclick="switchPhase('scorecard')">
+                        <span class="icon">⚖️</span> Phase D: Evidence Scorecard
+                    </button>
+                </li>
+                <li>
+                    <button class="nav-btn" data-phase="dossier" onclick="switchPhase('dossier')">
+                        <span class="icon">📄</span> Phase E: Final Dossier
+                    </button>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <button class="action-btn" onclick="startNewSession()">+ New Session</button>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Dynamic Content Injected Here -->
+            <div class="content-header">
+                <h2 id="phase-title">The Symposium</h2>
+                <div class="status-pill querying">Status: Loaded</div>
+            </div>
+
+            <div class="content-body" id="content-body">
+                <div class="loading-spinner"></div>
+            </div>
+        </main>
+
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

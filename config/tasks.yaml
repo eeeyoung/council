@@ -1,0 +1,242 @@
+moderator_curation:
+  description: >
+    The user has submitted the following scientific research question:
+
+    "{query}"
+
+    Your task is to design the optimal expert panel to investigate this question.
+    Generate between 3 and {max_experts} expert personas. Each expert must bring
+    a genuinely distinct disciplinary perspective. Avoid redundancy.
+
+    Respond with ONLY a valid JSON array with no surrounding text or markdown.
+    Each object must have these exact fields:
+      - name: A plausible academic name (e.g. "Dr. Lena Hartmann")
+      - discipline: Their primary field (e.g. "Theoretical Astrophysics")
+      - bias: Their known intellectual leaning or methodological preference
+      - persona_prompt: 2-3 sentences describing their personality and approach
+  expected_output: >
+    A valid JSON array of expert definition objects, with no surrounding text.
+
+expert_research:
+  description: >
+    You are {name}, a {discipline} expert.
+
+    Research Question: "{query}"
+
+    Your Task:
+    1. Use the search tool to find 3-5 highly relevant recent sources on this topic
+       from your disciplinary perspective.
+    2. For each source, extract the key finding most relevant to the research question.
+    3. Store each finding in the shared library using the library write tool.
+    4. Summarize your research findings in a structured report.
+
+    Focus on evidence that YOUR discipline uniquely contributes — avoid duplicating
+    what generalist sources would say.
+  expected_output: >
+    A structured research summary using EXACTLY this markdown format. DO NOT deviate from this structure:
+
+    # Structured Research Summary: [Topic]
+    ## [Your Name], [Your Discipline]
+    ---
+
+    ## 1. Disciplinary Framing
+    [Your framing of the question here]
+    ---
+
+    ## 2. Key Findings
+    ### Finding 1: [Short Title]
+    **Source:** [Primary Source Citation]
+    **Supporting Source:** [Secondary Source if any, else "None"]
+    **Key Finding:** [Detailed text of the finding]
+    **Relevance:** [Why this finding matters to the research question]
+
+    ### Finding 2: [Short Title]
+    **Source:** [Primary Source Citation]
+    **Supporting Source:** [Secondary Source if any, else "None"]
+    **Key Finding:** [Detailed text of the finding]
+    **Relevance:** [Why this finding matters to the research question]
+
+    [Repeat for up to 5 findings]
+    ---
+
+    ## 3. Preliminary Hypothesis
+    [Your evidence-based hypothesis here]
+
+    ## 4. Summary
+    [One paragraph summary of your research findings]
+
+expert_debate:
+  description: >
+    You are {name}, a {discipline} expert participating in a scientific symposium.
+
+    Research Question: "{query}"
+
+    === DEBATE TRANSCRIPT SO FAR ===
+    {transcript}
+    === END TRANSCRIPT ===
+
+    Your Task:
+    1. Review what your colleagues have said above.
+    2. Present your evidence-based perspective on the research question.
+    3. Explicitly respond to at least one claim made by a previous speaker —
+       either supporting it with additional evidence or challenging it with a counter-argument.
+    4. You may query the shared library to retrieve evidence supporting your points.
+    5. Keep your contribution focused, substantive, and between 200-400 words.
+  expected_output: >
+    A substantive debate contribution using EXACTLY this markdown format. DO NOT deviate:
+
+    [Turn X] **[Your Name]** ([Your Discipline]):
+    [Your opening argument]
+
+    **Response to Peers:**
+    [Your explicit response to previous claims]
+
+    **Evidence-Grounded Argument:**
+    [Your main substantive contribution]
+    ---
+
+    The **Response to Peers** section should be removed, if the agent is the first 
+    agent to contribute to the debate. If there are previous agents, the **Response to Peers**
+    section should be a substantive response to their claims. 
+
+host_a_synthesis:
+  description: >
+    Research Question: "{query}"
+
+    === FULL DEBATE TRANSCRIPT ===
+    {transcript}
+    === END TRANSCRIPT ===
+
+    === EVIDENCE SCORECARD ===
+    {evidence_scorecard}
+    === END SCORECARD ===
+
+    Synthesize the above into a unified hypothesis. Your synthesis must:
+    1. Identify the 2-3 strongest points of genuine consensus
+    2. Acknowledge the most significant point of expert disagreement
+    3. Propose a unified hypothesis that incorporates the best-supported elements
+    4. Note which aspects require further investigation
+  expected_output: >
+    A structured synthesis document using EXACTLY this markdown format. DO NOT deviate:
+
+    # Phase C Synthesis: The Unified Hypothesis
+
+    ## 1. Consensus Points
+    - [Point 1]
+    - [Point 2]
+    ---
+
+    ## 2. Key Disagreements
+    [Describe the primary conflict between experts]
+    ---
+
+    ## 3. Unified Hypothesis
+    [Your synthesized hypothesis]
+    ---
+
+    ## 4. Open Questions
+    - [Question 1]
+    - [Question 2]
+
+    ---
+    Any of the sections above is optional, you can add more or remove any.
+    
+    If there is no agreement between the experts, you should state that in the unified hypothesis.
+    
+    But try to reach a consensus if possible, highlighting the points of agreement.
+
+host_b_audit:
+  description: >
+    Research Question: "{query}"
+
+    === SYNTHESIS UNDER REVIEW ===
+    {synthesis}
+    === END SYNTHESIS ===
+
+    === EVIDENCE SCORECARD ===
+    {evidence_scorecard}
+    === END SCORECARD ===
+
+    Audit this synthesis as a hostile peer reviewer. Check for:
+    1. Lazy consensus (agreement without evidence)
+    2. Physical, chemical, or logical constraint violations
+    3. Claims not supported by the evidence scorecard
+    4. Ignored minority expert viewpoints
+
+    Return your verdict as a JSON object with:
+      - "approved": true or false
+      - "verdict": "APPROVED" or "REJECTED"
+      - "issues": list of specific problems found (empty if approved)
+      - "conflict_mandate": a string instruction for the next debate round if rejected,
+        or null if approved
+  expected_output: >
+    A JSON object with keys: approved (bool), verdict (string),
+    issues (list of strings), conflict_mandate (string or null).
+
+recorder_scorecard:
+  description: >
+    Research Question: "{query}"
+
+    === DEBATE TRANSCRIPT ===
+    {transcript}
+    === END TRANSCRIPT ===
+
+    Your task: Review the debate transcript and the shared research library.
+    For each significant factual claim in the transcript:
+    1. Query the library to find the supporting or contradicting evidence
+    2. Map the claim to its source
+
+    Return a JSON array of evidence entries. Each entry must have:
+      - "claim": the specific claim made
+      - "agent_name": who made the claim
+      - "source_url": the URL from the library (or "UNCITED" if no match found)
+  expected_output: >
+    A JSON array of evidence mapping objects.
+
+recorder_dossier:
+  description: >
+    Compile the final research dossier for the following:
+
+    Research Question: "{query}"
+    Final Synthesis: {synthesis}
+    Evidence Scorecard: {evidence_scorecard}
+    Full Transcript: {transcript}
+    Audit Rounds Completed: {audit_round}
+
+    Format the output as a professional Markdown research document with these sections:
+    1. **Abstract** (150 words max)
+    2. **Expert Panel** (list of experts and their disciplines)
+    3. **Key Findings by Discipline** (one subsection per expert)
+    4. **Synthesis & Unified Hypothesis**
+    5. **Dissenting Views & Open Questions**
+    6. **Bibliography** (all cited sources from the evidence scorecard)
+  expected_output: >
+    A complete, publication-ready Markdown research document using EXACTLY this format. DO NOT deviate:
+
+    # COUNCIL Dossier: [Research Question]
+
+    ## Abstract
+    [150 words max summary]
+    ---
+
+    ## Expert Panel
+    - **[Expert Name]**: [Discipline]
+    - **[Expert Name]**: [Discipline]
+    ---
+
+    ## Key Findings by Discipline
+    ### [Expert Name]
+    [Summary of their findings]
+    ---
+
+    ## Synthesis & Unified Hypothesis
+    [Final hypothesis]
+    ---
+
+    ## Dissenting Views & Open Questions
+    [Areas of disagreement and future work]
+    ---
+
+    ## Bibliography
+    - [Citation 1]
+    - [Citation 2]
