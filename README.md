@@ -29,42 +29,23 @@ COUNCIL simulates an entire scientific symposium using multiple AI agents. You p
 ---
 
 ## 🧠 Architecture
-┌──────────────────────────────────────────────────────────────────────┐
-│                          PHASE A: Panel Curation                     │
-│   Moderator Agent → analyzes query → proposes N expert personas      │
-│   User interactively approves, regenerates, or edits the panel       │
-└──────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        PHASE B: Parallel Research                    │
-│   Expert 1 ──┐                                                       │
-│   Expert 2 ──┤  Web search (Tavily / DuckDuckGo) ──► Shared Library  │
-│   Expert 3 ──┘  (ChromaDB vector store)               (Embeddings)   │
-│   Aggregator compiles all findings into structured summaries         │
-└──────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                      PHASE C: Sequential Symposium                   │
-│   Experts speak in turn order → respond to peers → cite evidence     │
-│   Recorder Agent maps every claim to a citation (Evidence Scorecard) │
-└──────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                       PHASE D: The Audit Loop                        │
-│   Host A (Synthesis)   →  Unified Hypothesis                         │
-│   Host B (Hostile Peer) →  APPROVED / REJECTED                       │
-│   If REJECTED → returns to Phase C with a conflict mandate (≤3 rds)  │
-└──────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     PHASE E: Final Dossier                           │
-│   Recorder compiles everything into a publication-ready Markdown     │
-│   dossier with full bibliography and claim-to-citation mappings      │
-└──────────────────────────────────────────────────────────────────────┘
+
+COUNCIL runs a five-phase pipeline — each phase feeds into the next:
+
+| Phase | Name | What Happens |
+|:-----:|------|--------------|
+| **A** | Panel Curation | Moderator Agent analyzes the query and proposes a panel of expert personas. You interactively approve, regenerate, or edit the panel. |
+| **B** | Parallel Research | Each expert independently searches the web and writes findings into a shared ChromaDB vector library. All experts run in parallel. An aggregator compiles structured summaries. |
+| **C** | Sequential Symposium | Experts speak in turn order, responding to peers and citing evidence. The Recorder Agent maps every claim to a citation (Evidence Scorecard). |
+| **D** | The Audit Loop | Host A synthesizes a Unified Hypothesis. Host B performs a hostile peer review and returns APPROVED or REJECTED. If rejected, the system loops back to Phase C with a conflict mandate (up to 3 rounds). |
+| **E** | Final Dossier | The Recorder compiles everything into a publication-ready Markdown dossier with full bibliography and claim-to-citation mappings. |
+
+```
+   PHASE A ──► PHASE B ──► PHASE C ──► PHASE D ──► PHASE E
+ (Curate)    (Research)   (Debate)    (Audit)     (Dossier)
+                                ▲          │
+                                └─ REJECT ─┘
+```
 
 
 ---
@@ -137,6 +118,7 @@ uv run python -m council.main "Your question" --verbose
 
 ## 📂 Project Structure
 
+```
 council/
 ├── config/
 │   ├── agents.yaml          # Agent role, goal, and backstory definitions
@@ -169,6 +151,7 @@ council/
 ├── .env.example             # Environment variable template
 ├── pyproject.toml           # Project metadata + dependencies
 └── README.md
+```
 
 
 ---
