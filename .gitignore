@@ -29,6 +29,8 @@ council.db
 .vscode/
 *.swp
 *.swo
+CLAUDE.md
+.claude/
 
 # OS
 .DS_Store
