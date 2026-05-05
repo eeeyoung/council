@@ -121,8 +121,16 @@ def run_curation(state: CouncilState) -> list[ExpertDefinition]:
 def _parse_expert_definitions(raw: str) -> list[ExpertDefinition]:
     """
     Extract and parse the JSON array from the LLM output.
-    Handles common LLM formatting issues (markdown fences, trailing commas).
+    Handles common LLM formatting issues (markdown fences, trailing commas)
+    and Windows encoding problems (non-UTF-8 characters).
     """
+    # Sanitize: replace characters that cause encoding issues on Windows
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    # Replace smart quotes and other problematic characters with ASCII equivalents
+    raw = raw.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    raw = raw.replace("–", "--").replace("—", "--").replace(" ", " ")
+
     # Strip markdown code fences if present
     cleaned = re.sub(r"```(?:json)?", "", raw).strip()
 

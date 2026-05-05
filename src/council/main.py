@@ -13,8 +13,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from pathlib import Path
+
+# ── Force UTF-8 encoding on Windows ──────────────────────────────────────
+# On Chinese/Japanese/Korean Windows, the default console encoding is often
+# GBK/Shift-JIS/EUC-KR. LLM outputs contain Unicode characters (em dashes,
+# smart quotes, academic symbols) that can't be encoded in those code pages,
+# causing "'gbk' codec can't decode byte 0x94" errors.
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stdin, "buffer"):
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
 
 # Ensure src/ is on the path when running as __main__
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
