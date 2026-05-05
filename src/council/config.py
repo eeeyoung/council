@@ -64,8 +64,9 @@ def build_llm(temperature: float = 0.7) -> object:
 
     provider = get_provider()
     if provider == "ds":
+        model = os.getenv("MODEL", "deepseek/deepseek-chat")
         return LLM(
-            model="deepseek/deepseek-chat",
+            model=model,
             api_key=get_deepseek_key(),
             temperature=temperature,
         )
