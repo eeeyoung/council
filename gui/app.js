@@ -1051,11 +1051,16 @@ async function renderScorecardPhase() {
     }
 
     const text = await fetchText(outputUrl(lastRound.scorecard));
-    const entryRegex = /^•\s+\[([^\]]+)\]\s+"([^"]+)"\s+→\s+(\S+)/;
+    const entryRegex = /^•\s+\[([^\]]+)\]\s+"([^"]+)"\s+→\s+(\S+)(?:\s+\[(.+?)\])?/;
     const entries = text.split('\n')
         .map(l => l.match(entryRegex))
         .filter(Boolean)
-        .map(m => ({ name: m[1], claim: m[2], url: m[3] }));
+        .map(m => ({
+            name: m[1],
+            claim: m[2],
+            url: m[3],
+            status: m[4] || '',  // e.g. "✓ verified", "⚠ misattributed", "⚠ unverifiable"
+        }));
 
     if (!entries.length) {
         contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">No evidence entries found.</p>';
@@ -1069,16 +1074,29 @@ async function renderScorecardPhase() {
             .map((e, i) => {
                 const meta   = claimColorMeta(e.name);
                 const isUncited = e.url === 'UNCITED' || e.url.startsWith('⚠');
-                const sourceHtml = isUncited
-                    ? `<span class="claim-source claim-uncited">⚠ UNCITED — no verifiable source found</span>`
-                    : (() => {
-                        const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
-                        return `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
-                            View Source → <span class="claim-domain">${_esc(domain)}</span>
-                        </a>`;
-                    })();
+                const isUnverifiable = e.status.includes('unverifiable') || e.status.includes('misattributed');
+                const isVerified = e.status.includes('verified');
+
+                let sourceHtml;
+                if (isUncited) {
+                    sourceHtml = `<span class="claim-source claim-uncited">⚠ UNCITED — no verifiable source found</span>`;
+                } else if (isUnverifiable) {
+                    sourceHtml = `<span class="claim-source claim-warning">⚠ ${_esc(e.status)}</span>`;
+                } else if (isVerified) {
+                    const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
+                    sourceHtml = `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
+                        ✓ View Source → <span class="claim-domain">${_esc(domain)}</span>
+                    </a>`;
+                } else {
+                    const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
+                    sourceHtml = `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
+                        View Source → <span class="claim-domain">${_esc(domain)}</span>
+                    </a>`;
+                }
+
+                const cardClass = isUncited ? 'claim-uncited-card' : (isUnverifiable ? 'claim-warning-card' : '');
                 return `
-                    <div class="claim-card ${meta.cls} ${isUncited ? 'claim-uncited-card' : ''}" id="claim-${i}">
+                    <div class="claim-card ${meta.cls} ${cardClass}" id="claim-${i}">
                         <div class="claim-expert-chip">${_esc(e.name)}</div>
                         <p class="claim-text">"${_esc(e.claim)}"</p>
                         ${sourceHtml}

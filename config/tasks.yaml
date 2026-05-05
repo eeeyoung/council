@@ -39,12 +39,16 @@ expert_research:
     Your Task:
     1. Use the search tool to find 3-5 highly relevant recent sources on this topic
        from your disciplinary perspective.
-    2. For each source, extract the key finding most relevant to the research question.
-    3. Store each finding in the shared library using the library write tool.
-       For each finding, include the search_reference noting which search result it
-       came from (e.g. "from search result #2 about quantum error correction").
-       The source_url MUST be the exact URL from your search results — do not guess
-       or fabricate URLs. The system will verify URLs before accepting them.
+    2. For each source, extract the key finding and copy-paste the EXACT sentence
+       from the search result snippet that supports your finding — this is your
+       source_quote. Do NOT rephrase or summarise it. The exact text is required.
+    3. Store each finding using the library write tool with these fields:
+       - content: your key finding
+       - source_url: the EXACT URL from your search results
+       - source_quote: the EXACT sentence from the source (copy-paste it)
+       - agent_name: your name
+       - search_reference: e.g. "from search result #2"
+       The source_quote is MANDATORY — without it the system cannot verify your source.
     4. Summarize your research findings in a structured report.
 
     Focus on evidence that YOUR discipline uniquely contributes — avoid duplicating
@@ -231,16 +235,18 @@ fact_checker_scorecard:
     Your task: Review the debate transcript and the shared research library.
     For each significant factual claim in the transcript:
     1. Query the library to find the supporting or contradicting evidence
-    2. Map the claim to its source
-    3. For sources not marked as verified in the library, use the web search
-       tool to check whether the cited source actually exists
-    4. If a source cannot be found via web search, mark it as "⚠ UNVERIFIED"
-       instead of silently accepting it
+    2. Map the claim to its source URL and note the verification_status
+       (verified/misattributed/unverifiable) and source_quote from the library
+    3. For "unverifiable" or "misattributed" sources, use web search to
+       independently check whether the source_quote appears on the claimed URL
+    4. If a claim has no supporting source, mark it as "UNCITED"
 
     Return a JSON array of evidence entries. Each entry must have:
       - "claim": the specific claim made
       - "agent_name": who made the claim
       - "source_url": the URL from the library (or "UNCITED" if no match found)
+      - "verification_status": "verified", "misattributed", "unverifiable", or ""
+      - "source_quote": the source quote from the library (or "" if none)
   expected_output: >
     A JSON array of evidence mapping objects.
 

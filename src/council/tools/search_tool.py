@@ -2,11 +2,6 @@
 council/tools/search_tool.py
 
 Web search tool for COUNCIL expert agents.
-
-Primary: Tavily (purpose-built for LLM agents, returns clean structured snippets)
-Fallback: DuckDuckGo (free, no key required, but less reliable)
-
-The tool auto-selects based on whether TAVILY_API_KEY is set in the environment.
 """
 
 from __future__ import annotations
@@ -34,14 +29,14 @@ class WebSearchTool(BaseTool):
     """
     Searches the web for up-to-date information.
     Uses Tavily if an API key is available, otherwise falls back to DuckDuckGo.
-    Returns a formatted string of results with titles, URLs, and content snippets.
     """
 
     name: str = "web_search"
     description: str = (
         "Search the web for recent, authoritative information on a topic. "
-        "Input a specific search query. Returns titles, URLs, and content snippets "
-        "from the most relevant sources. Use this to find evidence for your claims."
+        "Input a specific search query. Returns numbered results with titles, URLs, "
+        "and content snippets. Note the result number [N] — you will need the "
+        "exact URL when storing findings via library_write."
     )
     args_schema: Type[BaseModel] = SearchInput
 
@@ -65,12 +60,9 @@ class WebSearchTool(BaseTool):
             )
 
             lines: list[str] = []
-
-            # Top-level answer if available
             if response.get("answer"):
                 lines.append(f"[Summary] {response['answer']}\n")
 
-            # Individual results
             for i, result in enumerate(response.get("results", []), 1):
                 title = result.get("title", "No title")
                 url = result.get("url", "")
@@ -124,8 +116,4 @@ class WebSearchTool(BaseTool):
 
 def create_search_tool() -> WebSearchTool:
     """Factory function to create a WebSearchTool instance."""
-    tool = WebSearchTool()
-    tavily_key = council.config.get_tavily_key()
-    backend = "Tavily" if tavily_key else "DuckDuckGo (fallback)"
-    # Note: backend info is accessible but not printed here to avoid noise
-    return tool
+    return WebSearchTool()

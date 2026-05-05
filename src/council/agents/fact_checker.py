@@ -78,6 +78,8 @@ def parse_scorecard_output(raw_output: str) -> list[EvidenceEntry]:
                     claim=item.get("claim", ""),
                     agent_name=item.get("agent_name", ""),
                     source_url=item.get("source_url", "UNCITED"),
+                    verification_status=item.get("verification_status", ""),
+                    source_quote=item.get("source_quote", ""),
                 )
             )
         return entries

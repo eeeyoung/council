@@ -5,18 +5,16 @@ Shared Research Library — ChromaDB-backed vector store shared across ALL agent
 in a COUNCIL session.
 
 Design:
-- One persistent ChromaDB collection per session_id (created on first access)
-- Agents WRITE findings with LibraryWriteTool (with inline source verification)
+- One persistent ChromaDB collection per session_id
+- Agents WRITE findings with LibraryWriteTool (quote-based source verification)
 - Agents READ (semantic search) with LibraryReadTool
-- The singleton pattern ensures all agents in the same process share the same store
-
-Both tools are exposed as crewAI BaseTool instances.
+- Source verification uses quote text + web search, not HEAD requests
+- The tool NEVER rejects — it auto-corrects or stores with rich metadata
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import urllib.error
@@ -37,12 +35,10 @@ import council.config  # noqa: F401
 _clients: dict[str, chromadb.ClientAPI] = {}
 _collections: dict[str, chromadb.Collection] = {}
 
-# DOI pattern: 10.XXXX/... (e.g. 10.1038/nature12345)
 _DOI_PATTERN = re.compile(r"^10\.\d{4,}/[^\s]+$")
 
 
 def _get_collection(session_id: str) -> chromadb.Collection:
-    """Return (or create) the ChromaDB collection for this session."""
     if session_id not in _clients:
         db_path = os.path.join(os.getcwd(), "chroma_db", session_id)
         os.makedirs(db_path, exist_ok=True)
@@ -50,43 +46,87 @@ def _get_collection(session_id: str) -> chromadb.Collection:
             path=db_path,
             settings=Settings(anonymized_telemetry=False),
         )
-
     client = _clients[session_id]
     collection_name = f"council_{session_id}"
-
     if session_id not in _collections:
         _collections[session_id] = client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
-
     return _collections[session_id]
 
 
 def reset_library(session_id: str) -> None:
-    """Clear the library for a session (used in tests)."""
     _clients.pop(session_id, None)
     _collections.pop(session_id, None)
 
 
 # ------------------------------------------------------------------ #
-# Source verification
+# Source verification — quote-based, never reject
 # ------------------------------------------------------------------ #
 
+# Verification status values
+VERIFIED = "verified"
+MISATTRIBUTED = "misattributed"
+UNVERIFIABLE = "unverifiable"
 
-def _verify_source(source_url: str) -> tuple[str, bool, str]:
-    """
-    Validate and verify a source URL or DOI before storing.
 
-    Returns (normalized_url, verified, note).
-    Raises ValueError for invalid formats or unresolvable DOIs.
+def _search_quote_on_web(quote: str) -> str | None:
+    """Search the web for a quote and return the URL where it was found, or None."""
+    # Try DuckDuckGo first (no API key needed)
+    try:
+        from duckduckgo_search import DDGS
+
+        with DDGS() as ddgs:
+            for r in ddgs.text(quote[:200], max_results=3):
+                body = r.get("body", "")
+                href = r.get("href", "")
+                # Check if any significant part of the quote appears in the result
+                check = quote[:80].strip()
+                if check.lower() in body.lower() and href:
+                    return href
+    except Exception:
+        pass
+
+    # Try Tavily if available
+    try:
+        import council.config as cfg
+
+        key = cfg.get_tavily_key()
+        if key:
+            from tavily import TavilyClient
+
+            client = TavilyClient(api_key=key)
+            resp = client.search(query=quote[:200], max_results=3, search_depth="advanced")
+            for r in resp.get("results", []):
+                content = r.get("content", "")
+                url = r.get("url", "")
+                check = quote[:80].strip()
+                if check.lower() in content.lower() and url:
+                    return url
+    except Exception:
+        pass
+
+    return None
+
+
+def _verify_source(
+    source_url: str,
+    source_quote: str = "",
+) -> tuple[str, str, str]:
     """
-    raw = source_url.strip()
+    Verify a source using quote text and web search.
+    Never raises — always returns (normalized_url, status, note).
+
+    status is one of: "verified", "misattributed", "unverifiable"
+    """
+    raw_url = source_url.strip() if source_url else ""
+    raw_quote = source_quote.strip() if source_quote else ""
 
     # ── DOI ──────────────────────────────────────────────────────────
-    doi_match = _DOI_PATTERN.match(raw)
+    doi_match = _DOI_PATTERN.match(raw_url)
     if doi_match:
-        doi = raw
+        doi = raw_url
         try:
             req = urllib.request.Request(
                 f"https://doi.org/api/handles/{doi}",
@@ -94,34 +134,79 @@ def _verify_source(source_url: str) -> tuple[str, bool, str]:
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
-                    return f"https://doi.org/{doi}", True, "DOI verified via doi.org"
+                    return f"https://doi.org/{doi}", VERIFIED, "DOI verified via doi.org"
         except Exception:
-            raise ValueError(
-                f"DOI '{doi}' does not resolve. It may be fabricated or mistyped. "
-                f"Please use the exact DOI from your web search results."
-            )
-        return f"https://doi.org/{doi}", True, "DOI verified via doi.org"
+            pass
+        # DOI didn't resolve
+        if raw_quote:
+            found_url = _search_quote_on_web(raw_quote)
+            if found_url:
+                return found_url, MISATTRIBUTED, (
+                    f"DOI {doi} did not resolve, but source quote was found at {found_url}. "
+                    f"URL auto-corrected."
+                )
+        return raw_url, UNVERIFIABLE, f"DOI {doi} does not resolve"
+
+    # ── No URL provided — try quote search ───────────────────────────
+    if not raw_url:
+        if raw_quote:
+            found_url = _search_quote_on_web(raw_quote)
+            if found_url:
+                return found_url, VERIFIED, f"Source quote found at {found_url}. URL auto-discovered."
+            return "", UNVERIFIABLE, "Source quote not found on the web — it may be fabricated"
+        return "", UNVERIFIABLE, "No URL or source quote provided"
 
     # ── URL format check ─────────────────────────────────────────────
-    if not (raw.startswith("http://") or raw.startswith("https://")):
-        raise ValueError(
-            f"Invalid source_url: '{raw}'. "
-            f"The source_url must be a real URL (starting with http:// or https://) "
-            f"or a DOI (e.g. 10.1234/example) from your web search results. "
-            f"Do not make up descriptions or placeholder strings."
-        )
+    if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
+        if raw_quote:
+            found_url = _search_quote_on_web(raw_quote)
+            if found_url:
+                return found_url, MISATTRIBUTED, (
+                    f"'{raw_url}' is not a valid URL. Source quote found at {found_url}. "
+                    f"URL auto-corrected."
+                )
+        return raw_url, UNVERIFIABLE, f"'{raw_url}' is not a valid URL"
 
-    # ── URL resolvability check ──────────────────────────────────────
+    # ── Quote verification ───────────────────────────────────────────
+    if raw_quote:
+        found_url = _search_quote_on_web(raw_quote)
+        if found_url:
+            # Check if the found URL matches the claimed URL
+            claimed_domain = _extract_domain(raw_url)
+            found_domain = _extract_domain(found_url)
+            if claimed_domain and found_domain and claimed_domain == found_domain:
+                return raw_url, VERIFIED, f"Source quote confirmed on {found_domain}"
+            else:
+                return found_url, MISATTRIBUTED, (
+                    f"Source quote found on a different source ({found_url}) "
+                    f"than claimed ({raw_url}). URL auto-corrected."
+                )
+        else:
+            return raw_url, UNVERIFIABLE, "Source quote not found on the web — it may be fabricated"
+    else:
+        # No quote — basic URL reachability check
+        try:
+            req = urllib.request.Request(raw_url, method="HEAD")
+            req.add_header("User-Agent", "COUNCIL/0.1")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return raw_url, VERIFIED, f"URL reachable (HTTP {resp.status})"
+        except urllib.error.HTTPError as e:
+            return raw_url, UNVERIFIABLE, (
+                f"URL returned HTTP {e.code} — cannot verify without source quote"
+            )
+        except Exception:
+            return raw_url, UNVERIFIABLE, (
+                "URL unreachable and no source quote provided — cannot verify"
+            )
+
+
+def _extract_domain(url: str) -> str:
+    """Extract the domain from a URL for comparison."""
     try:
-        req = urllib.request.Request(raw, method="HEAD")
-        req.add_header("User-Agent", "COUNCIL/0.1 Source Verification")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return raw, True, f"URL reachable (HTTP {resp.status})"
-    except urllib.error.HTTPError as e:
-        # 4xx/5xx — store with warning (many academic sites return 403 for HEAD)
-        return raw, False, f"URL returned HTTP {e.code} (may be paywalled or restricted)"
+        from urllib.parse import urlparse
+        return urlparse(url).netloc
     except Exception:
-        return raw, False, "URL unreachable (timeout or connection error)"
+        return ""
 
 
 # ------------------------------------------------------------------ #
@@ -136,8 +221,12 @@ class LibraryWriteInput(BaseModel):
         description="The text content to store (a finding, quote, or summary).",
     )
     source_url: str = Field(
-        ...,
-        description="The URL or DOI from your web search results. Must be a real URL, not made up.",
+        default="",
+        description="The URL or DOI from your web search results.",
+    )
+    source_quote: str = Field(
+        default="",
+        description="REQUIRED: The exact sentence(s) from the source that support this finding. Copy-paste from the search result snippet or the source text.",
     )
     agent_name: str = Field(..., description="Your expert name.")
     search_reference: str = Field(
@@ -168,20 +257,17 @@ class LibraryReadInput(BaseModel):
 class LibraryWriteTool(BaseTool):
     """
     Store a research finding in the shared COUNCIL library.
-
-    IMPORTANT: The source_url is verified before storage. Fabricated or invalid
-    URLs/DOIs will be rejected. Only real sources from your web search results
-    will be accepted.
+    The source is verified using quote-based web search — not unreliable HEAD requests.
+    The tool NEVER rejects — it auto-corrects URLs or stores with rich metadata.
     """
 
     name: str = "library_write"
     description: str = (
         "Save a research finding to the shared COUNCIL library. "
-        "Provide: the session_id, the content (a key finding or quote), "
-        "the source_url (the EXACT URL or DOI from your web search results — "
-        "do NOT make up or guess URLs), your agent_name, and optionally "
-        "a search_reference noting which search result this came from. "
-        "The source will be verified before storage."
+        "Provide: session_id, content (key finding/quote), source_url (exact URL "
+        "from search results), source_quote (the EXACT sentence from the source "
+        "that supports this finding — copy-paste it), and agent_name. "
+        "The system will verify the quote and auto-correct the URL if needed."
     )
     args_schema: Type[BaseModel] = LibraryWriteInput
 
@@ -189,15 +275,15 @@ class LibraryWriteTool(BaseTool):
         self,
         session_id: str,
         content: str,
-        source_url: str,
         agent_name: str,
+        source_url: str = "",
+        source_quote: str = "",
         search_reference: str = "",
     ) -> str:
-        # ── Verify the source ────────────────────────────────────────
-        try:
-            normalized_url, verified, note = _verify_source(source_url)
-        except ValueError as exc:
-            return f"❌ REJECTED: {exc}"
+        # ── Verify (never reject) ─────────────────────────────────────
+        normalized_url, status, note = _verify_source(source_url, source_quote)
+        if not normalized_url and status == UNVERIFIABLE:
+            normalized_url = "UNCITED"
 
         # ── Store ────────────────────────────────────────────────────
         try:
@@ -210,8 +296,9 @@ class LibraryWriteTool(BaseTool):
             metadata = {
                 "source_url": normalized_url,
                 "agent_name": agent_name,
-                "verified": verified,
+                "verification_status": status,
                 "verification_note": note,
+                "source_quote": source_quote,
             }
             if search_reference:
                 metadata["search_reference"] = search_reference
@@ -222,11 +309,22 @@ class LibraryWriteTool(BaseTool):
                 ids=[doc_id],
             )
 
-            status = "✓ VERIFIED" if verified else "⚠ STORED (unverified)"
-            parts = [f"{status} — Finding stored in library (id={doc_id[:8]})"]
-            parts.append(f"  Source: {normalized_url}")
-            if note:
+            parts = []
+            if status == VERIFIED:
+                parts.append(f"✓ VERIFIED — Finding stored (id={doc_id[:8]})")
+                parts.append(f"  Source: {normalized_url}")
                 parts.append(f"  Note: {note}")
+            elif status == MISATTRIBUTED:
+                parts.append(f"⚠ MISATTRIBUTED — Finding stored with auto-corrected URL (id={doc_id[:8]})")
+                parts.append(f"  Your URL: {source_url}")
+                parts.append(f"  Corrected: {normalized_url}")
+                parts.append(f"  Note: {note}")
+            else:
+                parts.append(f"⚠ UNVERIFIABLE — Finding stored but source could not be verified (id={doc_id[:8]})")
+                parts.append(f"  Source: {normalized_url}")
+                parts.append(f"  Note: {note}")
+                parts.append(f"  TIP: Ensure source_quote is an EXACT sentence from the source. Rephrasing prevents verification.")
+
             if search_reference:
                 parts.append(f"  Trace: {search_reference}")
             return "\n".join(parts)
@@ -238,50 +336,51 @@ class LibraryWriteTool(BaseTool):
 class LibraryReadTool(BaseTool):
     """
     Search the shared COUNCIL library for relevant evidence.
-    Use this to find evidence supporting or contradicting claims in the debate.
     """
 
     name: str = "library_read"
     description: str = (
         "Semantically search the shared COUNCIL research library for evidence "
-        "relevant to your query. Returns matching findings with their source URLs, "
-        "verification status, and the agent who contributed them. "
-        "Use this to cite evidence or challenge unsupported claims."
+        "relevant to your query. Returns matching findings with source URLs, "
+        "verification status, source quotes, and contributor info."
     )
     args_schema: Type[BaseModel] = LibraryReadInput
 
     def _run(self, session_id: str, query: str, n_results: int = 5) -> str:
         try:
             collection = _get_collection(session_id)
-
             count = collection.count()
             if count == 0:
-                return "The shared library is currently empty. Run the research phase first."
+                return "The shared library is currently empty."
 
             actual_n = min(n_results, count)
-            results = collection.query(
-                query_texts=[query],
-                n_results=actual_n,
-            )
+            results = collection.query(query_texts=[query], n_results=actual_n)
 
             documents = results.get("documents", [[]])[0]
             metadatas = results.get("metadatas", [[]])[0]
             distances = results.get("distances", [[]])[0]
 
             if not documents:
-                return f"No relevant findings found for: '{query}'"
+                return f"No relevant findings for: '{query}'"
 
             lines: list[str] = [f"Library search results for: '{query}'\n"]
             for i, (doc, meta, dist) in enumerate(zip(documents, metadatas, distances), 1):
                 relevance = round((1 - dist) * 100, 1)
                 agent = meta.get("agent_name", "Unknown")
                 url = meta.get("source_url", "No URL")
-                verified = meta.get("verified", False)
-                verify_str = "✓ verified" if verified else "⚠ unverified"
+                status = meta.get("verification_status", UNVERIFIABLE)
+                status_str = {"verified": "✓ verified", "misattributed": "⚠ misattributed", "unverifiable": "⚠ unverifiable"}.get(status, status)
+                quote = meta.get("source_quote", "")
+                note = meta.get("verification_note", "")
                 search_ref = meta.get("search_reference", "")
                 snippet = doc[:300] + "…" if len(doc) > 300 else doc
                 lines.append(f"[{i}] Relevance: {relevance}%  |  Contributed by: {agent}")
-                lines.append(f"    Source: {url}  ({verify_str})")
+                lines.append(f"    Status: {status_str}")
+                lines.append(f"    Source: {url}")
+                if quote:
+                    lines.append(f"    Quote: \"{quote[:200]}\"")
+                if note:
+                    lines.append(f"    Note: {note}")
                 if search_ref:
                     lines.append(f"    Trace: {search_ref}")
                 lines.append(f"    {snippet}")
@@ -293,11 +392,5 @@ class LibraryReadTool(BaseTool):
             return f"Library read failed: {exc}"
 
 
-# ------------------------------------------------------------------ #
-# Factory
-# ------------------------------------------------------------------ #
-
-
 def create_library_tools() -> tuple[LibraryWriteTool, LibraryReadTool]:
-    """Return a (write, read) pair of library tools."""
     return LibraryWriteTool(), LibraryReadTool()

@@ -45,6 +45,8 @@ class EvidenceEntry(BaseModel):
     claim: str
     agent_name: str
     source_url: str  # "UNCITED" if no match found
+    verification_status: str = ""  # "verified", "misattributed", "unverifiable", or ""
+    source_quote: str = ""
     relevance_note: Optional[str] = None
 
 
@@ -132,7 +134,16 @@ class CouncilState(BaseModel):
             return "(Evidence scorecard not yet compiled.)"
         lines: list[str] = []
         for e in self.evidence_scorecard:
-            cited = e.source_url if e.source_url != "UNCITED" else "⚠ UNCITED"
+            if e.source_url == "UNCITED":
+                cited = "⚠ UNCITED"
+            elif e.verification_status == "verified":
+                cited = f"{e.source_url} [✓ verified]"
+            elif e.verification_status == "misattributed":
+                cited = f"{e.source_url} [⚠ misattributed]"
+            elif e.verification_status == "unverifiable":
+                cited = f"{e.source_url} [⚠ unverifiable]"
+            else:
+                cited = e.source_url
             lines.append(f"• [{e.agent_name}] \"{e.claim}\" → {cited}")
         return "\n".join(lines)
 

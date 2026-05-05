@@ -1,89 +1,67 @@
 """
 tests/test_verify_source.py
 
-Unit tests for the _verify_source function in library_tool.py.
-Tests URL format validation, DOI handling, and error paths.
+Unit tests for the quote-based _verify_source function.
+The new verifier NEVER raises — it always returns (url, status, note).
 """
 
 from __future__ import annotations
 
-import pytest
-
-from council.tools.library_tool import _verify_source
+from council.tools.library_tool import _verify_source, VERIFIED, MISATTRIBUTED, UNVERIFIABLE
 
 
-# ── Valid URLs ────────────────────────────────────────────────────────────
-
-def test_valid_https_url():
-    url = "https://arxiv.org/abs/1234.5678"
-    normalized, verified, note = _verify_source(url)
-    assert normalized == url
-    # arXiv should return 200
-    assert verified is True or verified is False  # depends on network
-    assert isinstance(note, str)
-
-
-def test_valid_http_url():
-    url = "http://example.com/paper"
-    normalized, verified, note = _verify_source(url)
-    assert normalized == url
-
-
-# ── DOI handling ──────────────────────────────────────────────────────────
-
-def test_doi_is_normalized():
+def test_doi_verified():
     doi = "10.1038/nature12345"
-    normalized, verified, note = _verify_source(doi)
-    # Should be normalized to full doi.org URL
-    assert normalized.startswith("https://doi.org/")
-    assert doi in normalized
+    url, status, note = _verify_source(doi)
+    assert status == VERIFIED
+    assert url.startswith("https://doi.org/")
 
 
-def test_fake_doi_raises():
-    """A DOI that doesn't resolve should raise ValueError."""
-    with pytest.raises(ValueError, match="does not resolve"):
-        _verify_source("10.9999/fake-doi-that-does-not-exist-12345")
+def test_valid_url_with_quote_found():
+    """A real URL with a quote that can be found — should verify or misattribute."""
+    url, status, note = _verify_source(
+        "https://arxiv.org/abs/1234.5678",
+        "generative adversarial networks"
+    )
+    # May be verified or misattributed depending on where the quote is found
+    assert status in (VERIFIED, MISATTRIBUTED)
 
 
-# ── Invalid URLs ──────────────────────────────────────────────────────────
-
-def test_plain_text_rejected():
-    with pytest.raises(ValueError, match="Invalid source_url"):
-        _verify_source("I made this up")
-
-
-def test_description_string_rejected():
-    with pytest.raises(ValueError, match="Invalid source_url"):
-        _verify_source("This is a paper about froth flotation")
+def test_no_longer_raises():
+    """The new _verify_source never raises ValueError."""
+    url, status, note = _verify_source("not a url at all")
+    assert status == UNVERIFIABLE
 
 
-def test_empty_string_rejected():
-    with pytest.raises(ValueError, match="Invalid source_url"):
-        _verify_source("")
+def test_empty_string_returns_unverifiable():
+    url, status, note = _verify_source("")
+    assert status == UNVERIFIABLE
 
 
-def test_doi_like_but_not_doi_rejected():
-    """Strings that start with a number but aren't real DOIs."""
-    with pytest.raises(ValueError):
-        _verify_source("10.this-is-not-a-real-doi")
+def test_fake_url_with_quote():
+    """A fake URL should be corrected if the quote is found elsewhere."""
+    url, status, note = _verify_source(
+        "https://totally-fake-paper-that-does-not-exist.com",
+        "generative adversarial networks"
+    )
+    # Should be misattributed (correction) or unverifiable (quote not found)
+    assert status in (MISATTRIBUTED, UNVERIFIABLE)
 
 
-# ── Edge cases ────────────────────────────────────────────────────────────
-
-def test_url_with_whitespace():
-    url = "  https://example.com/paper  "
-    normalized, verified, note = _verify_source(url)
-    assert normalized == "https://example.com/paper"
+def test_fake_url_no_quote():
+    """A fake URL without a quote — unverifiable."""
+    url, status, note = _verify_source("https://totally-fake-12345.com")
+    assert status == UNVERIFIABLE
 
 
-def test_doi_with_whitespace():
-    doi = "  10.1038/nature12345  "
-    normalized, verified, note = _verify_source(doi)
-    assert normalized.startswith("https://doi.org/")
-    assert "10.1038/nature12345" in normalized
+def test_doi_normalization():
+    doi = "10.1038/nature12345"
+    url, status, note = _verify_source(doi)
+    assert url.startswith("https://doi.org/")
 
 
-# ── Note: URL resolvability tests are inherently network-dependent.
-# The function stores with verified=True for reachable URLs and
-# verified=False for 4xx/5xx/timeout. The test_library_write_success
-# test in test_research.py verifies this behavior end-to-end.
+def test_status_values():
+    """Verify the three status constants are distinct strings."""
+    assert VERIFIED != MISATTRIBUTED
+    assert MISATTRIBUTED != UNVERIFIABLE
+    assert VERIFIED != UNVERIFIABLE
