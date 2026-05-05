@@ -58,6 +58,75 @@ def _extract_text(output: object) -> str:
     return output.raw if hasattr(output, "raw") else str(output)
 
 
+def _parse_expectation_output(raw_output: str) -> tuple[bool, str]:
+    """Parse the Expectation Evaluator's JSON output to get (met, gaps_text)."""
+    cleaned = re.sub(r"```(?:json)?", "", raw_output).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start == -1 or end == -1:
+        return False, "Expectation Evaluator produced malformed output."
+
+    try:
+        data = json.loads(cleaned[start : end + 1])
+        met = data.get("expectation_met", False)
+        gaps = data.get("gaps", [])
+        mandate = "\n".join(f"- {g}" for g in gaps) if gaps else "Address the expectation criteria."
+        return met, mandate
+    except Exception:
+        return False, "Failed to parse Expectation Evaluator output."
+
+
+def _evaluate_expectation(state, tasks_cfg: dict, verbose: bool = False) -> tuple[bool, str]:
+    """Run the Expectation Evaluator. Returns (expectation_met, mandate_text)."""
+    from council.agents.expectation_evaluator import build_expectation_evaluator
+
+    evaluator = build_expectation_evaluator()
+    cfg = tasks_cfg["expectation_evaluator_review"]
+
+    desc = cfg["description"].format(
+        query=state.query,
+        expectation_type=state.expectation_type.replace("_", " ").title(),
+        expectation_criteria=state.expectation_criteria,
+        synthesis=state.synthesis or "(No synthesis available)",
+    )
+
+    task = Task(
+        description=desc,
+        expected_output=cfg["expected_output"],
+        agent=evaluator,
+    )
+
+    crew = Crew(
+        agents=[evaluator],
+        tasks=[task],
+        process=Process.sequential,
+        verbose=verbose,
+    )
+
+    result = crew.kickoff()
+    raw = result.raw if hasattr(result, "raw") else str(result)
+    return _parse_expectation_output(raw)
+
+
+def _fallback_for_expectation(state, console, mandate: str) -> None:
+    """Handle expectation NOT_MET: fall back to a new debate round."""
+    state.audit_round += 1
+    if state.audit_round >= state.max_audit_rounds:
+        console.print(
+            f"[yellow]Maximum audit rounds ({state.max_audit_rounds}) reached.[/yellow] "
+            f"[bold]Symposium halted.[/bold]"
+        )
+        state.status = "dossier"
+        state.expectation_mandate = ""
+        return
+
+    console.print(f"[bold yellow]→  Expectation Evaluator: EXPECTATION NOT MET.[/bold yellow]")
+    console.print(f"[yellow]Gaps to address:[/yellow]\n{mandate}\n")
+    state.status = "debating"
+    state.expectation_mandate = mandate
+
+
 def run_audit_loop(
     state: CouncilState,
     console: Console | None = None,
@@ -147,9 +216,21 @@ def run_audit_loop(
     approved, mandate = _parse_discussant_output(critique)
 
     if approved:
-        console.print("[bold green]✓  Discussant APPROVED the consensus.[/bold green] The symposium is complete.")
-        state.status = "dossier"
+        console.print("[bold green]✓  Discussant APPROVED the consensus.[/bold green]")
         state.conflict_mandate = ""
+        # Run Expectation Evaluator
+        if state.expectation_criteria:
+            exp_met, exp_mandate = _evaluate_expectation(state, tasks_cfg, verbose)
+            state.expectation_met = exp_met
+            if exp_met:
+                console.print("[bold green]✓  Expectation Evaluator: EXPECTATION MET.[/bold green] The symposium is complete.")
+                state.status = "dossier"
+            else:
+                state.expectation_mandate = exp_mandate
+                _fallback_for_expectation(state, console, exp_mandate)
+                return state
+        else:
+            state.status = "dossier"
         return state
 
     # ── Step 3: Rapporteur Rebuttal ───────────────────────────────────────
@@ -223,9 +304,20 @@ def run_audit_loop(
     approved, mandate = _parse_discussant_output(final_critique)
 
     if approved:
-        console.print("[bold green]✓  Discussant APPROVED the revised consensus.[/bold green] The symposium is complete.")
-        state.status = "dossier"
+        console.print("[bold green]✓  Discussant APPROVED the revised consensus.[/bold green]")
         state.conflict_mandate = ""
+        if state.expectation_criteria:
+            exp_met, exp_mandate = _evaluate_expectation(state, tasks_cfg, verbose)
+            state.expectation_met = exp_met
+            if exp_met:
+                console.print("[bold green]✓  Expectation Evaluator: EXPECTATION MET.[/bold green] The symposium is complete.")
+                state.status = "dossier"
+            else:
+                state.expectation_mandate = exp_mandate
+                _fallback_for_expectation(state, console, exp_mandate)
+                return state
+        else:
+            state.status = "dossier"
         return state
 
     # ── Rebuttal rejected — fall back to debate ───────────────────────────
@@ -237,11 +329,13 @@ def run_audit_loop(
         )
         state.status = "dossier"
         state.conflict_mandate = ""
+        state.expectation_mandate = None
         return state
 
     console.print(f"[bold red]✗  Discussant REJECTED the rebuttal (Round {state.audit_round}).[/bold red]")
     console.print(f"[yellow]Mandate for next debate round:[/yellow] {mandate}\n")
     state.status = "debating"
     state.conflict_mandate = mandate
+    state.expectation_mandate = None
 
     return state

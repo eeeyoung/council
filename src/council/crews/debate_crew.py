@@ -67,12 +67,30 @@ def _run_single_turn(
         transcript=state.transcript_text,
     )
 
+    # Inject expectation criteria to keep debate aligned with desired outcome
+    if state.expectation_criteria:
+        description += (
+            f"\n\n=== SYMPOSIUM EXPECTATION ===\n"
+            f"Remember: the user expects this symposium to produce:\n"
+            f"{state.expectation_criteria}\n"
+            f"Frame your contribution to help achieve this outcome."
+        )
+
     if state.conflict_mandate:
         description += (
             f"\n\n=== DISCUSSANT MANDATE ===\n"
             f"The previous round was rejected by the Discussant with this instruction:\n"
             f"{state.conflict_mandate}\n"
             f"You MUST address this in your response."
+        )
+
+    if state.expectation_mandate:
+        description += (
+            f"\n\n=== EXPECTATION MANDATE ===\n"
+            f"The previous round was rejected by the Expectation Evaluator "
+            f"because the synthesis did not meet the user's desired outcome:\n"
+            f"{state.expectation_mandate}\n"
+            f"You MUST adjust your contribution to address these gaps."
         )
 
     description += (

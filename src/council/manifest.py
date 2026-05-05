@@ -89,6 +89,9 @@ def write_manifest(state, out_dir: Path) -> None:
         "query": state.query,
         "status": state.status,
         "created_at": state.created_at.isoformat() if state.created_at else None,
+        "expectation_type": state.expectation_type,
+        "expectation_detail": state.expectation_detail,
+        "expectation_criteria": state.expectation_criteria,
         "experts": experts,
         "audit_rounds": len(rounds),
         "files": {

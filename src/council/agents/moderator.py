@@ -74,9 +74,13 @@ def build_curation_task(agent: Agent, state: CouncilState) -> Task:
     """Build the panel curation task for the given state."""
     _, tasks_cfg = _load_config()
     cfg = tasks_cfg["moderator_curation"]
+    expectation_context = f"{state.expectation_type.replace('_', ' ').title()}" if state.expectation_type else "General scientific investigation"
+    if state.expectation_detail:
+        expectation_context += f" — {state.expectation_detail}"
     description = cfg["description"].format(
         query=state.query,
         max_experts=state.max_experts,
+        expectation_context=expectation_context,
     )
     return Task(
         description=description,

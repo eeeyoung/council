@@ -217,11 +217,15 @@ async def session_events(session_id: str) -> StreamingResponse:
 class GeneratePanelRequest(BaseModel):
     query: str = Field(..., min_length=10, description="Research question")
     expert_count: int = Field(default=5, ge=2, le=6, description="Number of experts")
+    expectation_type: str = Field(default="", description="Desired outcome type")
+    expectation_detail: str = Field(default="", description="Optional detail")
 
 
 class ProceedRequest(BaseModel):
     query: str
     experts: list[dict]  # Raw expert dicts from GUI editor
+    expectation_type: str = Field(default="", description="Desired outcome type")
+    expectation_detail: str = Field(default="", description="Optional detail")
 
 
 @app.get("/api/config")
@@ -246,11 +250,41 @@ def generate_panel(req: GeneratePanelRequest) -> dict:
     state = CouncilState(
         query=req.query,
         max_experts=req.expert_count,
+        expectation_type=req.expectation_type,
+        expectation_detail=req.expectation_detail,
     )
 
     experts = run_curation(state)
     state.experts = experts
     state.status = "researching"
+
+    # Run Expectation Curator if expectation type provided
+    criteria = ""
+    if state.expectation_type:
+        try:
+            from crewai import Crew, Process, Task
+            import yaml
+            from council.agents.expectation_curator import build_expectation_curator
+
+            _CONFIG_DIR = ROOT / "config"
+            with open(_CONFIG_DIR / "tasks.yaml") as f:
+                tasks_cfg = yaml.safe_load(f)
+
+            agent = build_expectation_curator()
+            cfg = tasks_cfg["expectation_curator_refine"]
+            desc = cfg["description"].format(
+                query=state.query,
+                expectation_type=state.expectation_type.replace("_", " ").title(),
+                expectation_detail=state.expectation_detail or "(none)",
+            )
+            task = Task(description=desc, expected_output=cfg["expected_output"], agent=agent)
+            crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+            result = crew.kickoff()
+            criteria = result.raw if hasattr(result, "raw") else str(result)
+            state.expectation_criteria = criteria
+        except Exception:
+            pass  # Continue without criteria if curator fails
+
     save_state(state)
 
     # Write panel JSON
@@ -266,6 +300,7 @@ def generate_panel(req: GeneratePanelRequest) -> dict:
         "session_id": state.session_id,
         "query": state.query,
         "experts": [e.model_dump() for e in experts],
+        "expectation_criteria": criteria,
     }
 
 
@@ -291,6 +326,8 @@ def proceed_session(session_id: str, req: ProceedRequest) -> dict:
 
     state.query = req.query
     state.experts = [ExpertDefinition(**e) for e in req.experts]
+    state.expectation_type = req.expectation_type or state.expectation_type
+    state.expectation_detail = req.expectation_detail or state.expectation_detail
     save_state(state)
 
     return {"session_id": session_id, "status": "ready"}

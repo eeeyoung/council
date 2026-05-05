@@ -83,12 +83,19 @@ class CouncilState(BaseModel):
     transcript: list[TranscriptEntry] = Field(default_factory=list)
     evidence_scorecard: list[EvidenceEntry] = Field(default_factory=list)
 
+    # --- Expectation (Phase A) ---
+    expectation_type: str = ""  # e.g. "definitive_answer", "feasible_plan", etc.
+    expectation_detail: str = ""  # optional user-provided detail text
+    expectation_criteria: str = ""  # refined success criteria from Expectation Curator
+
     # --- Audit (Phase D) ---
     audit_round: int = 0
     max_audit_rounds: int = 3
     audit_history: list[AuditResult] = Field(default_factory=list)
     synthesis: Optional[str] = None
     conflict_mandate: Optional[str] = None  # Active mandate for the current debate round
+    expectation_met: Optional[bool] = None  # Evaluated after Discussant approves
+    expectation_mandate: Optional[str] = None  # Mandate if expectation not met
 
     # --- Final output (Phase E) ---
     dossier_path: Optional[str] = None

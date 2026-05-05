@@ -227,11 +227,15 @@ function startNewSession() {
 // ─── Phase A: Expert Panel ────────────────────────────────────────────────────
 
 const panelWizardState = {
-    step:    1,
-    query:   '',
-    experts: [],
-    dirty:   false,
-    visited: new Set([1]),
+    step:              1,
+    query:             '',
+    expectationType:   'definitive_answer',
+    expectationDetail: '',
+    expectationCriteria: '',
+    experts:           [],
+    sessionId:         null,
+    dirty:             false,
+    visited:           new Set([1]),
 };
 
 async function renderPanelPhase() {
@@ -279,6 +283,19 @@ function _renderStepper() {
 // ── Step 1: Research question ─────────────────────────────────────────────────
 
 function _renderStep1() {
+    const expTypes = [
+        ['definitive_answer', 'Definitive Answer — reach a clear conclusion'],
+        ['feasible_plan', 'Feasible Plan — detailed implementation roadmap'],
+        ['balanced_overview', 'Balanced Overview — survey competing viewpoints'],
+        ['research_roadmap', 'Research Roadmap — prioritize future directions'],
+        ['decision_analysis', 'Decision Analysis — weigh alternatives, recommend one'],
+        ['hypothesis_evaluation', 'Hypothesis Evaluation — test a specific hypothesis'],
+        ['custom', 'Custom — describe your own desired outcome'],
+    ];
+    const expOptions = expTypes.map(([val, label]) =>
+        `<option value="${val}" ${panelWizardState.expectationType === val ? 'selected' : ''}>${label}</option>`
+    ).join('');
+
     contentBody.innerHTML = `
         <div class="panel-editor wizard-panel">
             ${_renderStepper()}
@@ -287,7 +304,7 @@ function _renderStep1() {
                     <h2 class="question-title">What would you like to investigate?</h2>
                     <p class="question-hint">Be as specific as possible. The Moderator will design a panel of experts optimised for your exact question.</p>
                 </div>
-                <textarea id="query-input" class="question-input" rows="5"
+                <textarea id="query-input" class="question-input" rows="4"
                     placeholder="e.g. Can we simulate froth flotation images indistinguishable from real ones using only operational variables and a small training set?"
                     oninput="onQueryInput()"
                 >${_esc(panelWizardState.query)}</textarea>
@@ -295,6 +312,17 @@ function _renderStep1() {
                     <span id="query-char-count" class="query-char">${panelWizardState.query.length} chars</span>
                     <span class="query-tip">Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to generate panel</span>
                 </div>
+            </div>
+            <div class="expectation-stage" style="margin-top:20px;padding:16px;background:var(--bg-secondary);border-radius:8px;">
+                <label style="font-weight:600;display:block;margin-bottom:8px;">What kind of outcome do you expect?</label>
+                <select id="expectation-type" class="panel-input" onchange="onExpectationChange()"
+                    style="width:100%;margin-bottom:10px;">
+                    ${expOptions}
+                </select>
+                <textarea id="expectation-detail" class="panel-input" rows="2"
+                    placeholder="Optional: add specific detail or context about what you want (e.g. 'I need concrete next steps for my R&D team')"
+                    oninput="onExpectationChange()"
+                    style="width:100%;">${_esc(panelWizardState.expectationDetail)}</textarea>
             </div>
             <div class="wizard-nav">
                 <div></div>
@@ -320,6 +348,11 @@ window.onQueryInput = function () {
     if (counter) counter.textContent = `${val.length} chars`;
     const btn = document.getElementById('generate-btn');
     if (btn) btn.disabled = val.trim().length < 10;
+};
+
+window.onExpectationChange = function () {
+    panelWizardState.expectationType = document.getElementById('expectation-type')?.value || '';
+    panelWizardState.expectationDetail = document.getElementById('expectation-detail')?.value || '';
 };
 
 // ── Step 2: Panel editor ──────────────────────────────────────────────────────
@@ -445,7 +478,12 @@ async function _liveGeneratePanel(query, expertCount) {
         res = await fetch(`${API_BASE}/api/sessions/generate-panel`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, expert_count: expertCount }),
+            body: JSON.stringify({
+                query,
+                expert_count: expertCount,
+                expectation_type: panelWizardState.expectationType,
+                expectation_detail: panelWizardState.expectationDetail,
+            }),
         });
     } catch (e) {
         contentBody.innerHTML = `<div class="markdown-content"><p style="color:#ef4444;padding:40px;">
@@ -463,6 +501,7 @@ async function _liveGeneratePanel(query, expertCount) {
 
     const data = await res.json();
     panelWizardState.sessionId = data.session_id;
+    panelWizardState.expectationCriteria = data.expectation_criteria || '';
     panelWizardState.experts = data.experts.map((e, i) => ({
         name:           e.name,
         discipline:     e.discipline || '',
@@ -593,6 +632,8 @@ window.proceedPanel = async function () {
                 body: JSON.stringify({
                     query: panelWizardState.query,
                     experts: panelWizardState.experts,
+                    expectation_type: panelWizardState.expectationType,
+                    expectation_detail: panelWizardState.expectationDetail,
                 }),
             });
         } catch (e) {
@@ -1263,6 +1304,15 @@ function _connectLiveSSE(sessionId) {
             : '✗ REJECTED — another round needed';
         _renderAuditVerdict(verdict, data.approved);
         showToast(verdict, data.approved ? 'success' : 'error');
+    });
+
+    _liveSSE.addEventListener('expectation_result', (e) => {
+        const data = JSON.parse(e.data);
+        const msg = data.met
+            ? '✓ Expectation MET — proceeding to dossier'
+            : '✗ Expectation NOT MET — another round needed';
+        _renderAuditVerdict(msg, data.met);
+        showToast(msg, data.met ? 'success' : 'warning');
     });
 
     _liveSSE.addEventListener('dossier_chunk', (e) => {

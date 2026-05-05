@@ -61,8 +61,16 @@ def _build_research_task(
         query=state.query,
     )
 
+    # Inject expectation criteria to guide research toward the desired outcome
+    if state.expectation_criteria:
+        description += (
+            f"\n\n=== SYMPOSIUM EXPECTATION ===\n"
+            f"The user expects this symposium to produce a specific type of outcome. "
+            f"Your research should gather evidence that supports this goal:\n"
+            f"{state.expectation_criteria}"
+        )
+
     # Inject the session_id so the agent knows which library collection to write to.
-    # We append this to the task description since tools receive it as an argument.
     description += (
         f"\n\nIMPORTANT: When calling library_write or library_read tools, "
         f"always use session_id='{state.session_id}'."

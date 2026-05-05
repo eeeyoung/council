@@ -81,6 +81,36 @@ def print_expert_panel(experts: list[ExpertDefinition]) -> None:
     console.print()
 
 
+def _run_expectation_curator(state: CouncilState) -> str:
+    """Run the Expectation Curator to refine success criteria."""
+    from council.agents.expectation_curator import build_expectation_curator
+    from crewai import Crew, Process, Task
+    from pathlib import Path
+    import yaml
+
+    _CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+    with open(_CONFIG_DIR / "tasks.yaml") as f:
+        tasks_cfg = yaml.safe_load(f)
+
+    agent = build_expectation_curator()
+    cfg = tasks_cfg["expectation_curator_refine"]
+    desc = cfg["description"].format(
+        query=state.query,
+        expectation_type=state.expectation_type.replace("_", " ").title(),
+        expectation_detail=state.expectation_detail or "(none)",
+    )
+
+    task = Task(
+        description=desc,
+        expected_output=cfg["expected_output"],
+        agent=agent,
+    )
+
+    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+    result = crew.kickoff()
+    return result.raw if hasattr(result, "raw") else str(result)
+
+
 def panel_approval_loop(
     state: CouncilState, skip_confirm: bool = False
 ) -> CouncilState:
@@ -154,6 +184,23 @@ def panel_approval_loop(
             console.print("[dim]Session cancelled.[/dim]")
             raise SystemExit(0)
 
+    # ── Run Expectation Curator ────────────────────────────────────────
+    if state.expectation_type:
+        console.print("\n[bold yellow]⟳  Expectation Curator is refining success criteria…[/bold yellow]\n")
+        try:
+            criteria = _run_expectation_curator(state)
+            state.expectation_criteria = criteria
+            console.print(
+                Panel(
+                    criteria,
+                    border_style="magenta",
+                    title="[bold]Success Criteria[/bold]",
+                )
+            )
+        except Exception as exc:
+            console.print(f"[yellow]⚠  Expectation Curator failed: {exc}[/yellow]")
+            console.print("[dim]Continuing without refined criteria.[/dim]")
+
     state.status = "researching"
     return state
 
@@ -226,16 +273,50 @@ def main() -> None:
             console.print("[bold red]No query provided. Exiting.[/bold red]")
             raise SystemExit(1)
 
-        state = CouncilState(
-            query=query,
-            max_experts=max(2, min(8, args.experts)),
-        )
+        # ── Expectation gathering ──────────────────────────────────────────
+    EXPECTATION_TYPES = {
+        "1": ("definitive_answer", "Definitive Answer — reach a clear conclusion"),
+        "2": ("feasible_plan", "Feasible Plan — detailed implementation roadmap"),
+        "3": ("balanced_overview", "Balanced Overview — survey competing viewpoints"),
+        "4": ("research_roadmap", "Research Roadmap — prioritize future directions"),
+        "5": ("decision_analysis", "Decision Analysis — weigh alternatives, recommend one"),
+        "6": ("hypothesis_evaluation", "Hypothesis Evaluation — test a specific hypothesis"),
+        "7": ("custom", "Custom — describe your own desired outcome"),
+    }
 
-        console.print(
-            f"\n[bold]Session ID:[/bold] [cyan]{state.session_id}[/cyan]  "
-            f"[dim](save this to resume later: --session-id {state.session_id})[/dim]\n"
+    console.print("\n[bold]What kind of outcome do you expect from this symposium?[/bold]\n")
+    for key, (_, label) in EXPECTATION_TYPES.items():
+        console.print(f"  [cyan]{key}[/cyan]. {label}")
+
+    choice = Prompt.ask(
+        "\n[bold cyan]Select outcome type[/bold cyan]",
+        choices=list(EXPECTATION_TYPES.keys()),
+        default="1",
+    )
+    exp_type, exp_label = EXPECTATION_TYPES[choice]
+
+    exp_detail = ""
+    if exp_type == "custom" or choice in ("1", "2", "3", "4", "5", "6"):
+        detail = Prompt.ask(
+            "[dim]Optional: add specific detail or context[/dim]",
+            default="",
         )
-        save_state(state)
+        if detail.strip():
+            exp_detail = detail.strip()
+
+    state = CouncilState(
+        query=query,
+        max_experts=max(2, min(8, args.experts)),
+        expectation_type=exp_type,
+        expectation_detail=exp_detail,
+    )
+
+    console.print(
+        f"\n[bold]Session ID:[/bold] [cyan]{state.session_id}[/cyan]  "
+        f"[dim](save this to resume later: --session-id {state.session_id})[/dim]\n"
+    )
+    console.print(f"[dim]Expectation:[/dim] {exp_label}")
+    save_state(state)
 
     out_dir = Path("outputs")
     out_dir.mkdir(exist_ok=True)

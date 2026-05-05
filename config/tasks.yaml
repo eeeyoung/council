@@ -4,7 +4,13 @@ moderator_curation:
 
     "{query}"
 
+    Desired symposium outcome: {expectation_context}
+
     Your task is to design the optimal expert panel to investigate this question.
+    The panel should be assembled with the desired outcome in mind — different
+    outcomes require different kinds of expertise (e.g., a feasibility plan needs
+    engineers and project managers; a balanced overview needs methodologists and
+    historians of science).
 
     FIRST: Use the web search tool to research the current state of this field.
     Identify real sub-disciplines, active research directions, and methodological
@@ -309,3 +315,67 @@ dossier_author_compile:
     - https://doi.org/10.1234/example
     - https://arxiv.org/abs/1234.5678
     - ⚠ UNCITED
+
+expectation_curator_refine:
+  description: >
+    The user is convening a scientific symposium to investigate this question:
+
+    "{query}"
+
+    The user wants the symposium to produce: {expectation_type}
+    Additional detail from the user: {expectation_detail}
+
+    Your task: Translate the user's desired outcome into 3-5 concrete,
+    measurable success criteria that the final synthesis must satisfy.
+
+    Examples of what success criteria look like for different outcome types:
+    - "Definitive Answer": The synthesis must pick a clear winning position
+      with enumerated supporting evidence
+    - "Feasible Plan": The synthesis must include specific steps, timelines,
+      resource estimates, and risk assessments
+    - "Balanced Overview": The synthesis must give equal weight to competing
+      viewpoints and identify methodological strengths/weaknesses of each
+    - "Research Roadmap": The synthesis must prioritize knowledge gaps by
+      impact and feasibility
+    - "Decision Analysis": The synthesis must score alternatives against
+      explicit criteria and recommend one
+    - "Hypothesis Evaluation": The synthesis must assess the hypothesis
+      against available evidence with a confidence rating
+
+    Return ONLY a numbered list of success criteria, one per line. No preamble.
+    Each criterion should be a clear, testable statement that an evaluator can
+    check against the synthesis.
+  expected_output: >
+    A numbered list of 3-5 success criteria.
+
+expectation_evaluator_review:
+  description: >
+    Research Question: "{query}"
+
+    === DESIRED OUTCOME ===
+    {expectation_type}
+    === END OUTCOME ===
+
+    === SUCCESS CRITERIA ===
+    {expectation_criteria}
+    === END CRITERIA ===
+
+    === SYNTHESIS UNDER REVIEW ===
+    {synthesis}
+    === END SYNTHESIS ===
+
+    Evaluate whether the synthesis satisfies the success criteria. Your job is
+    NOT to re-audit scientific rigor — that has already been done. Your job is
+    only to check whether the output matches the user's desired outcome type.
+
+    For each criterion, state whether it is SATISFIED or NOT SATISFIED with a
+    brief explanation. Then give an overall verdict.
+
+    Return a JSON object with:
+      - "expectation_met": true or false
+      - "verdict": "EXPECTATION_MET" or "EXPECTATION_NOT_MET"
+      - "criteria_results": list of {{"criterion": "...", "satisfied": true/false, "note": "..."}}
+      - "gaps": list of specific gaps to address in the next round (empty if met)
+  expected_output: >
+    A JSON object with keys: expectation_met (bool), verdict (string),
+    criteria_results (list of objects), gaps (list of strings).

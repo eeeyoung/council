@@ -183,6 +183,13 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
                     "mandate": latest.conflict_mandate or "",
                 }
 
+                # Emit expectation evaluation if available
+                if state.expectation_met is not None:
+                    yield "expectation_result", {
+                        "met": state.expectation_met,
+                        "mandate": state.expectation_mandate or "",
+                    }
+
         _write_manifest(state, OUT_DIR)
 
     yield "phase_complete", {"phase": "C"}
