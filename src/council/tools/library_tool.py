@@ -49,8 +49,14 @@ def _get_collection(session_id: str) -> chromadb.Collection:
     client = _clients[session_id]
     collection_name = f"council_{session_id}"
     if session_id not in _collections:
+        # Use the default Sentence Transformers embedding (all-MiniLM-L6-v2),
+        # which works offline. Explicitly set to avoid auto-detecting Google
+        # embeddings from environment variables.
+        from chromadb.utils import embedding_functions
+        ef = embedding_functions.DefaultEmbeddingFunction()
         _collections[session_id] = client.get_or_create_collection(
             name=collection_name,
+            embedding_function=ef,
             metadata={"hnsw:space": "cosine"},
         )
     return _collections[session_id]
