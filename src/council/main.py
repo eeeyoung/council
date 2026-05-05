@@ -13,50 +13,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import builtins
-import io
-import locale
-import os
 import sys
 from pathlib import Path
 
-# ── Force UTF-8 encoding on Windows ──────────────────────────────────────
-# On Chinese/Japanese/Korean Windows, Python defaults to the system ANSI code
-# page (GBK/Shift-JIS/EUC-KR) for ALL I/O — console, file reads, third-party
-# library internals. LLM outputs contain Unicode characters (em dashes, smart
-# quotes, academic symbols) that cause: "'gbk' codec can't decode byte 0x94"
-#
-# Three-layer fix:
-#   1. Monkey-patch open() to default to UTF-8 (catches third-party libs)
-#   2. Reconfigure stdio streams for UTF-8 (catches console output)
-#   3. Set environment variables (helps subprocesses)
-# All must happen before ANY other import touches I/O.
-
-_original_open = builtins.open
-
-def _utf8_open(file, mode="r", buffering=-1, encoding=None, errors=None,
-               newline=None, closefd=True, opener=None):
-    """open() wrapper that defaults to UTF-8 on Windows."""
-    if encoding is None and ("r" in mode or "w" in mode or "a" in mode or "x" in mode):
-        if "b" not in mode:
-            encoding = "utf-8"
-            errors = errors or "replace"
-    return _original_open(file, mode, buffering, encoding, errors,
-                          newline, closefd, opener)
-
-if sys.platform == "win32":
-    builtins.open = _utf8_open
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-    if hasattr(sys.stdin, "buffer"):
-        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
-    try:
-        locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
-    except locale.Error:
-        pass
-
-os.environ.setdefault("PYTHONUTF8", "1")
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+# Encoding fix is in config.py (imported next) — runs for both CLI and server
 
 # Ensure src/ is on the path when running as __main__
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
