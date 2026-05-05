@@ -60,7 +60,7 @@ More content.
 [Turn 2] **Dr. Bob Smith** (Experimental Physics):
 Bob's rebuttal goes here.
 
-[HOST-A] **Synthesis Host** (Round 1):
+[RAPPORTEUR] **Rapporteur** (Round 1):
 Some synthesis text.
 """
     (out / f"{session_id}_transcript_r0.md").write_text(transcript, encoding="utf-8")

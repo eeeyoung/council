@@ -72,7 +72,7 @@ def build_expert_agent(
         llm=llm,
         verbose=verbose,
         allow_delegation=False,
-        max_iter=5,  # Limit tool calls to control token usage
+        max_iter=8,  # Allow room for search + 3-5 writes + final report
     )
 
 

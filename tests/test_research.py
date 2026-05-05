@@ -63,6 +63,7 @@ def clean_library(sample_state):
 
 
 def test_library_write_success(sample_state):
+    """Store a finding — URL may be unverifiable (404/timeout) but should still store."""
     tool = LibraryWriteTool()
     result = tool._run(
         session_id=sample_state.session_id,
@@ -70,8 +71,35 @@ def test_library_write_success(sample_state):
         source_url="https://example.com/wimp-paper",
         agent_name="Dr. Lena Hartmann",
     )
-    assert "✓" in result
+    # example.com/wimp-paper returns 404, so we get "STORED (unverified)"
+    assert "STORED" in result
     assert "example.com" in result
+
+
+def test_library_write_rejects_invalid_url(sample_state):
+    """Made-up strings should be rejected, not stored."""
+    tool = LibraryWriteTool()
+    result = tool._run(
+        session_id=sample_state.session_id,
+        content="Some finding.",
+        source_url="I made this up",
+        agent_name="Dr. Test",
+    )
+    assert "REJECTED" in result
+    assert "Invalid" in result or "source_url" in result.lower()
+
+
+def test_library_write_with_search_reference(sample_state):
+    """search_reference should be accepted and stored."""
+    tool = LibraryWriteTool()
+    result = tool._run(
+        session_id=sample_state.session_id,
+        content="Finding with traceability.",
+        source_url="https://example.com/traced",
+        agent_name="Dr. Test",
+        search_reference="from search result #3",
+    )
+    assert "STORED" in result
 
 
 def test_library_write_multiple(sample_state):
@@ -83,7 +111,6 @@ def test_library_write_multiple(sample_state):
             source_url=f"https://example.com/paper-{i}",
             agent_name="Dr. Lena Hartmann",
         )
-    # No errors expected
     read_tool = LibraryReadTool()
     result = read_tool._run(
         session_id=sample_state.session_id,

@@ -85,48 +85,29 @@ def _build_aggregation_task(
     agents: list,
     research_tasks: list[Task],
     state: CouncilState,
+    tasks_cfg: dict,
     llm: object,
 ) -> tuple[object, Task]:
     """
-    Build a lightweight aggregation agent + task that waits for all async tasks.
+    Build the Research Aggregator agent + task that waits for all async tasks.
     This is the synchronisation point that ensures all research is complete
     before Phase C begins.
     """
-    from crewai import Agent
+    from council.agents.aggregator import build_aggregator
 
-    aggregator = Agent(
-        role="Research Aggregator",
-        goal=(
-            "Compile a structured overview of all research findings from the expert panel. "
-            "Do not add new research — only organise and summarise what was found."
-        ),
-        backstory=(
-            "You are a research librarian who specialises in synthesising multi-disciplinary "
-            "findings into a clear, navigable summary. You are precise and concise."
-        ),
-        llm=llm,
-        verbose=False,
-        allow_delegation=False,
-    )
+    aggregator = build_aggregator(llm=llm)
 
     expert_names = ", ".join(e.name for e in state.experts)
 
+    cfg = tasks_cfg["aggregator_compile"]
+    description = cfg["description"].format(
+        query=state.query,
+        expert_names=expert_names,
+    )
+
     task = Task(
-        description=(
-            f"The following experts have each conducted independent research on the question:\n"
-            f"'{state.query}'\n\n"
-            f"Experts: {expert_names}\n\n"
-            f"Review each expert's findings (provided as context) and produce a structured "
-            f"summary with one section per expert. Each section should include:\n"
-            f"1. Expert name and discipline\n"
-            f"2. Their key findings (bullet points)\n"
-            f"3. Their preliminary hypothesis\n\n"
-            f"Keep each section concise (100-150 words max)."
-        ),
-        expected_output=(
-            "A structured Markdown document with one section per expert summarising "
-            "their research findings and preliminary hypothesis."
-        ),
+        description=description,
+        expected_output=cfg["expected_output"],
         agent=aggregator,
         context=research_tasks,  # This task waits for ALL async tasks to complete
         async_execution=False,
@@ -195,6 +176,7 @@ def run_research(
         agents=expert_agents,
         research_tasks=research_tasks,
         state=state,
+        tasks_cfg=tasks_cfg,
         llm=llm,
     )
 
@@ -221,8 +203,16 @@ def run_research(
 
     for i, (expert_def, task) in enumerate(zip(state.experts, research_tasks)):
         if i < len(tasks_output):
-            raw = tasks_output[i].raw if hasattr(tasks_output[i], "raw") else str(tasks_output[i])
-            state.research_summaries[expert_def.name] = raw
+            out = tasks_output[i]
+            # Prefer exported_output (final answer) over raw (may contain tool call traces)
+            text = getattr(out, "exported_output", None) or getattr(out, "raw", None) or str(out)
+            # If the output looks like raw tool calls rather than a report, try harder
+            if text and not text.strip().startswith("#"):
+                # Fall back to str() which sometimes has cleaner output
+                str_out = str(out)
+                if str_out.strip().startswith("#"):
+                    text = str_out
+            state.research_summaries[expert_def.name] = text or "(No output captured)"
         else:
             state.research_summaries[expert_def.name] = "(No output captured)"
 

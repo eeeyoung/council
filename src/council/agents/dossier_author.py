@@ -1,8 +1,8 @@
 """
-council/agents/host_a.py
+council/agents/dossier_author.py
 
-Host A (Synthesis Host)
-Attempts to forge a consensus document from the debate transcript and scorecard.
+Dossier Author — compiles the final publication-ready research dossier from
+the expert research, debate transcript, synthesis, and evidence scorecard.
 """
 
 from __future__ import annotations
@@ -23,12 +23,12 @@ def _load_agents_config() -> dict:
         return yaml.safe_load(f)
 
 
-def build_host_a(llm: object | None = None) -> Agent:
-    """Build Host A (Synthesis Host)."""
+def build_dossier_author(llm: object | None = None) -> Agent:
+    """Build the Dossier Author agent."""
     if llm is None:
-        llm = build_llm(temperature=0.4)
+        llm = build_llm(temperature=0.6)
 
-    cfg = _load_agents_config()["host_a"]
+    cfg = _load_agents_config()["dossier_author"]
 
     return Agent(
         role=cfg["role"],

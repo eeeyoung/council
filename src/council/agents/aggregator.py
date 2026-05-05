@@ -1,10 +1,8 @@
 """
-council/agents/host_b.py
+council/agents/aggregator.py
 
-Host B (Hostile Peer Reviewer)
-Evaluates Host A's consensus document against the Evidence Scorecard.
-Outputs structured JSON indicating approval or rejection, with a mandate for
-the next round if rejected.
+Research Aggregator — compiles all parallel research findings from the expert
+panel into a structured summary before Phase C begins.
 """
 
 from __future__ import annotations
@@ -25,12 +23,12 @@ def _load_agents_config() -> dict:
         return yaml.safe_load(f)
 
 
-def build_host_b(llm: object | None = None) -> Agent:
-    """Build Host B (Hostile Peer Reviewer)."""
+def build_aggregator(llm: object | None = None) -> Agent:
+    """Build the Research Aggregator agent."""
     if llm is None:
-        llm = build_llm(temperature=0.2)  # Low temp for strict logic
+        llm = build_llm(temperature=0.4)
 
-    cfg = _load_agents_config()["host_b"]
+    cfg = _load_agents_config()["aggregator"]
 
     return Agent(
         role=cfg["role"],

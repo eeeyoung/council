@@ -78,10 +78,12 @@ async def simulate_session(
                     yield "research_chunk", {"expert_id": rf["expert_id"], "chunk": para + "\n\n"}
                     await asyncio.sleep(_PARA_PAUSE)
 
+            preview = text[:600] + "…" if len(text) > 600 else text
             yield "research_complete", {
                 "expert_id":   rf["expert_id"],
                 "expert_name": rf["expert_name"],
                 "file":        rf["file"],
+                "summary":     preview,
             }
             await asyncio.sleep(0.25)
 
@@ -92,8 +94,8 @@ async def simulate_session(
         yield "phase_start", {"phase": "C"}
 
         msg_regex = re.compile(
-            r"(\[Turn \d+\]|\[HOST-A\]|\[HOST-B\]) \*\*(.*?)\*\* \((.*?)\):\n"
-            r"([\s\S]*?)(?=\n(?:\[Turn \d+\]|\[HOST-A\]|\[HOST-B\])|$)"
+            r"(\[Turn \d+\]|\[RAPPORTEUR\]|\[DISCUSSANT\]) \*\*(.*?)\*\* \((.*?)\):\n"
+            r"([\s\S]*?)(?=\n(?:\[Turn \d+\]|\[RAPPORTEUR\]|\[DISCUSSANT\])|$)"
         )
 
         for round_info in files.get("rounds", []):
@@ -147,11 +149,12 @@ async def simulate_session(
 
                 # Full message
                 yield "debate_message", {
-                    "name":    name,
-                    "marker":  marker,
-                    "meta":    meta,
-                    "round":   current_round,
-                    "content": content,
+                    "name":       name,
+                    "marker":     marker,
+                    "meta":       meta,
+                    "discipline": meta,  # meta IS the discipline
+                    "round":      current_round,
+                    "content":    content,
                 }
                 await asyncio.sleep(_MSG_PAUSE)
 
@@ -160,7 +163,20 @@ async def simulate_session(
                 yield "scorecard_ready", {"round": round_num, "file": round_info["scorecard"]}
 
             if round_info.get("consensus"):
-                yield "audit_result", {"round": round_num, "file": round_info["consensus"]}
+                # Infer approved: if this is the last round with a consensus, it was approved
+                all_rounds = files.get("rounds", [])
+                has_next_round = any(
+                    r["round"] == round_num + 1 for r in all_rounds
+                )
+                approved = not has_next_round
+                yield "audit_result", {
+                    "round":    round_num,
+                    "approved": approved,
+                    "verdict":  "APPROVED" if approved else "REJECTED",
+                    "issues":   [],
+                    "mandate":  "",
+                    "file":     round_info["consensus"],
+                }
 
         yield "phase_complete", {"phase": "C"}
 

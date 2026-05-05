@@ -40,7 +40,7 @@ class TranscriptEntry(BaseModel):
 
 
 class EvidenceEntry(BaseModel):
-    """One claim-to-citation mapping produced by the RecorderAgent."""
+    """One claim-to-citation mapping produced by the Fact-Checker."""
 
     claim: str
     agent_name: str
@@ -49,7 +49,7 @@ class EvidenceEntry(BaseModel):
 
 
 class AuditResult(BaseModel):
-    """Host B's verdict on a synthesis."""
+    """Discussant's verdict on a synthesis."""
 
     round: int
     approved: bool
@@ -109,7 +109,11 @@ class CouncilState(BaseModel):
             return "(No contributions yet — you are the first speaker.)"
         lines: list[str] = []
         for entry in self.transcript:
-            lines.append(f"[Turn {entry.turn}] {entry.agent_name} ({entry.discipline}):")
+            if entry.phase == "audit":
+                marker = "[RAPPORTEUR]" if "Rapporteur" in entry.agent_name else "[DISCUSSANT]"
+                lines.append(f"{marker} **{entry.agent_name}** ({entry.discipline}):")
+            else:
+                lines.append(f"[Turn {entry.turn}] **{entry.agent_name}** ({entry.discipline}):")
             lines.append(entry.speech)
             lines.append("")
         return "\n".join(lines)

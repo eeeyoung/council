@@ -22,7 +22,7 @@
 
 ## ✨ What is COUNCIL?
 
-COUNCIL simulates an entire scientific symposium using multiple AI agents. You provide a research question — the system assembles a curated panel of experts, each with a unique discipline, personality, and intellectual bias. Those experts independently research the topic, debate it in a structured forum, and then face a hostile peer-review audit. The output is a publication-ready dossier with full citations.
+COUNCIL simulates an entire scientific symposium using multiple AI agents. You provide a research question — the system assembles a curated panel of experts, each with a unique discipline, personality, and intellectual bias. Those experts independently research the topic, debate it in a structured forum, and then face a rigorous peer-review audit. The output is a publication-ready dossier with full citations.
 
 > *Think of it as a self-contained AI research committee that never sleeps.*
 
@@ -36,9 +36,9 @@ COUNCIL runs a five-phase pipeline — each phase feeds into the next:
 |:-----:|------|--------------|
 | **A** | Panel Curation | Moderator Agent analyzes the query and proposes a panel of expert personas. You interactively approve, regenerate, or edit the panel. |
 | **B** | Parallel Research | Each expert independently searches the web and writes findings into a shared ChromaDB vector library. All experts run in parallel. An aggregator compiles structured summaries. |
-| **C** | Sequential Symposium | Experts speak in turn order, responding to peers and citing evidence. The Recorder Agent maps every claim to a citation (Evidence Scorecard). |
-| **D** | The Audit Loop | Host A synthesizes a Unified Hypothesis. Host B performs a hostile peer review and returns APPROVED or REJECTED. If rejected, the system loops back to Phase C with a conflict mandate (up to 3 rounds). |
-| **E** | Final Dossier | The Recorder compiles everything into a publication-ready Markdown dossier with full bibliography and claim-to-citation mappings. |
+| **C** | Sequential Symposium | Experts speak in turn order, responding to peers and citing evidence. The Fact-Checker maps every claim to a citation (Evidence Scorecard). |
+| **D** | The Audit Loop | The Rapporteur synthesizes a Unified Hypothesis. The Discussant performs a rigorous peer review and returns APPROVED or REJECTED. If rejected, the system loops back to Phase C with a conflict mandate (up to 3 rounds). |
+| **E** | Final Dossier | The Dossier Author compiles everything into a publication-ready Markdown dossier with full bibliography and claim-to-citation mappings. |
 
 ```
    PHASE A ──► PHASE B ──► PHASE C ──► PHASE D ──► PHASE E
@@ -56,9 +56,10 @@ COUNCIL runs a five-phase pipeline — each phase feeds into the next:
 |-------|------|
 | **Moderator** | Analyzes the query and assembles the optimal panel of expert personas |
 | **Expert** (×N) | Each researches, debates, and writes — with a unique discipline, bias, and persona |
-| **Recorder** | Maps every factual claim to a source citation; compiles the final dossier |
-| **Host A** (Synthesis) | Distills the full debate transcript into a unified hypothesis |
-| **Host B** (Hostile Peer) | Adversarially audits the synthesis for lazy consensus, logical errors, and unsupported claims |
+| **Fact-Checker** | Maps every factual claim to a source citation; identifies unsupported claims |
+| **Dossier Author** | Compiles the final publication-ready research dossier with full bibliography |
+| **Rapporteur** | Distills the full debate transcript into a unified hypothesis |
+| **Discussant** | Rigorously audits the synthesis for lazy consensus, logical errors, and unsupported claims |
 | **Aggregator** | Compiles all parallel research into structured summaries |
 
 ---
@@ -95,23 +96,53 @@ Edit `.env` with your API keys:
 | `TAVILY_API_KEY` | (Optional) Tavily search key — falls back to DuckDuckGo |
 | `MODEL` | Model identifier, e.g. `gemini/gemini-2.5-flash-lite` |
 
-### Run Your First Symposium
+### Usage
+
+There are three ways to run COUNCIL: the CLI, the web server, and the test suite.
+
+#### 1. CLI — Full symposium pipeline
 
 ```bash
-# Basic usage
-uv run python -m council.main "What are the most promising approaches to fusion energy?"
+# Console script (installed entry point)
+uv run council "What are the most promising approaches to fusion energy?"
 
-# Customize the expert panel size
-uv run python -m council.main "Is dark matter a WIMP or an axion?" --experts 3
+# Or via the module directly (same pipeline, more flags)
+uv run python -m council.main "Is dark matter a WIMP or an axion?"
+
+# Customize the expert panel size (2–8, default 5)
+uv run council "Your question" --experts 3
 
 # Skip interactive panel approval (good for CI / testing)
-uv run python -m council.main "Your question" --no-confirm
+uv run council "Your question" --no-confirm
 
-# Resume a previous session
-uv run python -m council.main --session-id abc12345
+# Resume a previous session from its session ID
+uv run council --session-id abc12345
 
-# Enable verbose logging to see agents' thought process
-uv run python -m council.main "Your question" --verbose
+# Enable verbose logging to see each agent's thought process
+uv run council "Your question" --verbose
+```
+
+`--experts N` controls panel size. `--no-confirm` skips the interactive panel approval step. `--session-id ID` resumes a saved session. `--verbose` shows live agent thought process.
+
+#### 2. Web server / GUI ("Mission Control")
+
+```bash
+# Review mode — browse and replay past sessions (default)
+uv run python -m council.server
+
+# Live mode — create and run new sessions through the browser
+uv run python -m council.server --mode live
+
+# Custom host and port
+uv run python -m council.server --port 9000 --host 0.0.0.0
+```
+
+Open `http://127.0.0.1:8000` in a browser. **Review mode** lets you browse completed sessions, view manifests, and replay sessions via SSE. **Live mode** additionally lets you create new sessions and run the full LLM pipeline in real time through the GUI.
+
+#### 3. Running tests
+
+```bash
+uv run pytest tests/ -v
 ```
 
 ---
@@ -131,9 +162,11 @@ council/
 │   ├── agents/
 │   │   ├── expert.py        # Expert agent builder (research + debate)
 │   │   ├── moderator.py     # Panel curation (Phase A)
-│   │   ├── host_a.py        # Synthesis host (Phase D)
-│   │   ├── host_b.py        # Hostile peer reviewer (Phase D)
-│   │   └── recorder.py      # Evidence scorecard + dossier (Phases C, E)
+│   │   ├── aggregator.py    # Research compilation (Phase B)
+│   │   ├── rapporteur.py    # Synthesis rapporteur (Phase D)
+│   │   ├── discussant.py    # Rigorous discussant (Phase D)
+│   │   ├── fact_checker.py  # Evidence scorecard (Phases C, E)
+│   │   └── dossier_author.py # Final dossier compilation (Phase E)
 │   ├── crews/
 │   │   ├── research_crew.py # Parallel research crew (Phase B)
 │   │   ├── debate_crew.py   # Sequential debate crew (Phase C)
@@ -187,14 +220,6 @@ Sample debate excerpt:
 | **CLI** | Rich (beautiful terminal UI) |
 | **Embeddings** | Google Generative AI embeddings |
 | **Package Manager** | uv |
-
----
-
-## 🧪 Running Tests
-
-```bash
-uv run pytest tests/ -v
-```
 
 ---
 

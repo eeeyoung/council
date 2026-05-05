@@ -4,9 +4,8 @@ council/crews/dossier_crew.py
 Phase E: Final Dossier Compilation.
 
 Runs after the audit loop approves (state.status == "dossier").
-The RecorderAgent:
-  1. Maps every claim in the transcript to a citation (scorecard task)
-  2. Compiles the full publication-ready Markdown dossier
+The Fact-Checker maps claims to citations, then the Dossier Author compiles
+the full publication-ready Markdown dossier.
 """
 
 from __future__ import annotations
@@ -18,10 +17,12 @@ from crewai import Crew, Process, Task
 from rich.console import Console
 
 import council.config  # noqa: F401
-from council.agents.recorder import build_recorder_agent
+from council.agents.fact_checker import build_fact_checker
+from council.agents.dossier_author import build_dossier_author
 from council.config import build_llm
 from council.state import CouncilState
 from council.tools.library_tool import LibraryReadTool
+from council.tools.search_tool import create_search_tool
 
 _CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 
@@ -46,14 +47,19 @@ def run_dossier(
     console.print("\n[bold blue]⟳  Phase E: Compiling Final Dossier…[/bold blue]\n")
 
     tasks_cfg = _load_tasks_config()
-    llm = build_llm(temperature=0.3)
 
-    # Build agent with library access
+    # Build agents — Fact-Checker (precision) and Dossier Author (narrative)
     library_read = LibraryReadTool(session_id=state.session_id)
-    recorder = build_recorder_agent(library_read=library_read, llm=llm)
+    search_tool = create_search_tool()
+    fact_checker = build_fact_checker(
+        library_read=library_read,
+        search_tool=search_tool,
+        llm=build_llm(temperature=0.2),
+    )
+    author = build_dossier_author(llm=build_llm(temperature=0.6))
 
     # Task 1: Evidence Scorecard
-    cfg_sc = tasks_cfg["recorder_scorecard"]
+    cfg_sc = tasks_cfg["fact_checker_scorecard"]
     desc_sc = cfg_sc["description"].format(
         query=state.query,
         transcript=state.transcript_text,
@@ -61,14 +67,11 @@ def run_dossier(
     task_scorecard = Task(
         description=desc_sc,
         expected_output=cfg_sc["expected_output"],
-        agent=recorder,
+        agent=fact_checker,
     )
 
     # Task 2: Final Dossier — depends on scorecard
-    cfg_dos = tasks_cfg["recorder_dossier"]
-    experts_list = "\n".join(
-        f"- **{e.name}**: {e.discipline}" for e in state.experts
-    )
+    cfg_dos = tasks_cfg["dossier_author_compile"]
     desc_dos = cfg_dos["description"].format(
         query=state.query,
         synthesis=state.synthesis or "(No synthesis available)",
@@ -79,18 +82,18 @@ def run_dossier(
     task_dossier = Task(
         description=desc_dos,
         expected_output=cfg_dos["expected_output"],
-        agent=recorder,
+        agent=author,
         context=[task_scorecard],
     )
 
     crew = Crew(
-        agents=[recorder],
+        agents=[fact_checker, author],
         tasks=[task_scorecard, task_dossier],
         process=Process.sequential,
         verbose=verbose,
     )
 
-    console.print("[dim]  Recorder is mapping claims to citations…[/dim]")
+    console.print("[dim]  Fact-Checker is mapping claims to citations…[/dim]")
     result = crew.kickoff()
 
     # Extract dossier text from final task output
@@ -104,7 +107,7 @@ def run_dossier(
     else:
         dossier_text = result.raw if hasattr(result, "raw") else str(result)
 
-    state.dossier_path = dossier_text  # store text temporarily
+    state.dossier_path = dossier_text
     state.status = "done"
 
     console.print("[bold green]✓  Dossier compiled successfully.[/bold green]")

@@ -942,15 +942,15 @@ body {
     text-align: left;
 }
 
-/* Host A: Synthesis Host — Purple/Violet */
-.host-a .chat-avatar { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3); font-size: 22px; }
-.host-a .chat-header strong { color: #a78bfa; }
-.host-a .chat-bubble { border-right-color: #a78bfa; background: rgba(167, 139, 250, 0.04); }
+/* Rapporteur — Purple/Violet */
+.rapporteur .chat-avatar { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3); font-size: 22px; }
+.rapporteur .chat-header strong { color: #a78bfa; }
+.rapporteur .chat-bubble { border-right-color: #a78bfa; background: rgba(167, 139, 250, 0.04); }
 
-/* Host B: Hostile Peer Reviewer — Amber/Orange */
-.host-b .chat-avatar { background: rgba(251, 146, 60, 0.15); color: #fb923c; border: 1px solid rgba(251, 146, 60, 0.3); font-size: 22px; }
-.host-b .chat-header strong { color: #fb923c; }
-.host-b .chat-bubble { border-right-color: #fb923c; background: rgba(251, 146, 60, 0.04); }
+/* Discussant — Amber/Orange */
+.discussant .chat-avatar { background: rgba(251, 146, 60, 0.15); color: #fb923c; border: 1px solid rgba(251, 146, 60, 0.3); font-size: 22px; }
+.discussant .chat-header strong { color: #fb923c; }
+.discussant .chat-bubble { border-right-color: #fb923c; background: rgba(251, 146, 60, 0.04); }
 
 /* Right-aligned indicator */
 .indicator-right {
@@ -1638,4 +1638,22 @@ body {
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: #ef4444;
+}
+
+/* Uncited / unverifiable source in scorecard */
+.claim-uncited {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    font-size: 0.82em;
+    cursor: default;
+    text-decoration: none;
+}
+.claim-uncited-card {
+    border-left: 3px solid rgba(239, 68, 68, 0.4);
 }

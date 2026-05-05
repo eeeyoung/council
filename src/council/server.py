@@ -102,7 +102,7 @@ def _build_manifest(session_id: str) -> dict | None:
     for r in range(10):
         t = OUTPUTS_DIR / f"{session_id}_transcript_r{r}.md"
         s = OUTPUTS_DIR / f"{session_id}_scorecard_r{r}.md"
-        c = OUTPUTS_DIR / f"{session_id}_consensus_r{r + 1}.md"
+        c = OUTPUTS_DIR / f"{session_id}_consensus_r{r}.md"
         if t.exists() or s.exists():
             rounds.append({
                 "round":     r,
@@ -148,93 +148,7 @@ def _build_manifest(session_id: str) -> dict | None:
     }
 
 
-def _write_manifest(state) -> None:
-    """Write/update outputs/{session_id}_manifest.json."""
-    from council.state import CouncilState
-
-    experts = []
-    for i, e in enumerate(state.experts):
-        expert_id = e.name.replace(".", "").replace(" ", "_").lower()
-        experts.append({
-            "id": expert_id,
-            "name": e.name,
-            "discipline": e.discipline,
-            "bias": e.bias,
-            "persona_prompt": e.persona_prompt,
-            "color_index": i,
-        })
-
-    research_files: list[dict] = []
-    for expert in experts:
-        f = OUTPUTS_DIR / f"{state.session_id}_research_{expert['id']}.md"
-        if f.exists():
-            research_files.append({
-                "expert_id": expert["id"],
-                "expert_name": expert["name"],
-                "file": f.name,
-            })
-    agg = OUTPUTS_DIR / f"{state.session_id}_research___aggregation__.md"
-    if agg.exists():
-        research_files.append({
-            "expert_id": "__aggregation__",
-            "expert_name": "Aggregator Summary",
-            "file": agg.name,
-        })
-
-    rounds: list[dict] = []
-    for r in range(10):
-        t = OUTPUTS_DIR / f"{state.session_id}_transcript_r{r}.md"
-        s = OUTPUTS_DIR / f"{state.session_id}_scorecard_r{r}.md"
-        c = OUTPUTS_DIR / f"{state.session_id}_consensus_r{r + 1}.md"
-        if t.exists() or s.exists():
-            rounds.append({
-                "round": r,
-                "transcript": t.name if t.exists() else None,
-                "scorecard": s.name if s.exists() else None,
-                "consensus": c.name if c.exists() else None,
-            })
-
-    if not rounds:
-        t = OUTPUTS_DIR / f"{state.session_id}_transcript.md"
-        s = OUTPUTS_DIR / f"{state.session_id}_scorecard.md"
-        if t.exists() or s.exists():
-            rounds.append({
-                "round": 0,
-                "transcript": t.name if t.exists() else None,
-                "scorecard": s.name if s.exists() else None,
-                "consensus": None,
-            })
-
-    panel = OUTPUTS_DIR / f"{state.session_id}_panel.json"
-    dossier = OUTPUTS_DIR / f"{state.session_id}_dossier.md"
-
-    phases_complete: list[str] = []
-    if panel.exists():             phases_complete.append("A")
-    if research_files:             phases_complete.append("B")
-    if rounds:                     phases_complete.append("C")
-    if any(r.get("consensus") for r in rounds): phases_complete.append("D")
-    if dossier.exists():           phases_complete.append("E")
-
-    manifest = {
-        "session_id": state.session_id,
-        "query": state.query,
-        "status": state.status,
-        "created_at": state.created_at.isoformat() if state.created_at else None,
-        "experts": experts,
-        "audit_rounds": len(rounds),
-        "files": {
-            "panel": panel.name if panel.exists() else None,
-            "research": research_files,
-            "rounds": rounds,
-            "dossier": dossier.name if dossier.exists() else None,
-        },
-        "phases_complete": phases_complete,
-    }
-
-    OUTPUTS_DIR.mkdir(exist_ok=True)
-    manifest_path = OUTPUTS_DIR / f"{state.session_id}_manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+from council.manifest import write_manifest as _write_manifest
 
 
 # ─── API routes ───────────────────────────────────────────────────────────────
@@ -346,7 +260,7 @@ def generate_panel(req: GeneratePanelRequest) -> dict:
         encoding="utf-8",
     )
 
-    _write_manifest(state)
+    _write_manifest(state, OUTPUTS_DIR)
 
     return {
         "session_id": state.session_id,

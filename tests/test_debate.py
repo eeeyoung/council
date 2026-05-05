@@ -1,7 +1,7 @@
 """
 tests/test_debate.py
 
-Stage 3 tests for the Debate Phase and RecorderAgent logic.
+Stage 3 tests for the Debate Phase and Fact-Checker logic.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from council.agents.recorder import parse_scorecard_output
+from council.agents.fact_checker import parse_scorecard_output
 from council.state import CouncilState, ExpertDefinition
 
 

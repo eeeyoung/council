@@ -7,7 +7,7 @@ In this phase, experts speak one by one. To support dynamic transcript injection
 and allow for future user interruptions (the Director's Console), we run each
 speaker's turn as a single-agent Crew execution in a loop.
 
-At the end of the loop, the RecorderAgent reviews the full transcript and generates
+At the end of the loop, the Fact-Checker reviews the full transcript and generates
 the Evidence Scorecard.
 """
 
@@ -21,7 +21,7 @@ from rich.console import Console
 
 import council.config  # noqa: F401
 from council.agents.expert import build_expert_agent
-from council.agents.recorder import build_recorder_agent, parse_scorecard_output
+from council.agents.fact_checker import build_fact_checker, parse_scorecard_output
 from council.config import build_llm
 from council.state import CouncilState
 from council.tools.library_tool import create_library_tools
@@ -59,8 +59,7 @@ def _run_single_turn(
     )
 
     cfg = tasks_cfg["expert_debate"]
-    
-    # Inject the live transcript and any active conflict mandate
+
     description = cfg["description"].format(
         name=expert_def.name,
         discipline=expert_def.discipline,
@@ -70,8 +69,8 @@ def _run_single_turn(
 
     if state.conflict_mandate:
         description += (
-            f"\n\n=== HOST B MANDATE ===\n"
-            f"The previous round was rejected by the Auditor with this instruction:\n"
+            f"\n\n=== DISCUSSANT MANDATE ===\n"
+            f"The previous round was rejected by the Discussant with this instruction:\n"
             f"{state.conflict_mandate}\n"
             f"You MUST address this in your response."
         )
@@ -124,7 +123,7 @@ def run_debate(
     # 1. The Debate Loop
     for expert_def in state.experts:
         console.print(f"[bold yellow]→ {expert_def.name} is preparing their statement...[/bold yellow]")
-        
+
         speech = _run_single_turn(
             expert_def=expert_def,
             state=state,
@@ -143,38 +142,37 @@ def run_debate(
             speech=speech.strip(),
             phase="debate",
         )
-        
-        # Display preview
+
         preview = speech[:150].replace("\n", " ") + "…"
         console.print(f"  [cyan]\"{preview}\"[/cyan]\n")
 
     # 2. The Evidence Scorecard
-    console.print("[bold yellow]⟳  RecorderAgent is compiling the Evidence Scorecard...[/bold yellow]")
-    
-    recorder_agent = build_recorder_agent(library_read=library_read)
-    rec_cfg = tasks_cfg["recorder_scorecard"]
-    
-    rec_desc = rec_cfg["description"].format(
+    console.print("[bold yellow]⟳  Fact-Checker is compiling the Evidence Scorecard...[/bold yellow]")
+
+    fc_agent = build_fact_checker(library_read=library_read, search_tool=search_tool)
+    fc_cfg = tasks_cfg["fact_checker_scorecard"]
+
+    fc_desc = fc_cfg["description"].format(
         query=state.query,
         transcript=state.transcript_text,
     )
-    rec_desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for library searches."
+    fc_desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for library searches."
 
-    rec_task = Task(
-        description=rec_desc,
-        expected_output=rec_cfg["expected_output"],
-        agent=recorder_agent,
+    fc_task = Task(
+        description=fc_desc,
+        expected_output=fc_cfg["expected_output"],
+        agent=fc_agent,
     )
 
-    rec_crew = Crew(
-        agents=[recorder_agent],
-        tasks=[rec_task],
+    fc_crew = Crew(
+        agents=[fc_agent],
+        tasks=[fc_task],
         verbose=verbose,
     )
 
-    rec_result = rec_crew.kickoff()
-    raw_scorecard = rec_result.raw if hasattr(rec_result, "raw") else str(rec_result)
-    
+    fc_result = fc_crew.kickoff()
+    raw_scorecard = fc_result.raw if hasattr(fc_result, "raw") else str(fc_result)
+
     state.evidence_scorecard = parse_scorecard_output(raw_scorecard)
     state.status = "auditing"
 
@@ -183,4 +181,79 @@ def run_debate(
         f"Scorecard contains {len(state.evidence_scorecard)} evidence mappings.\n"
     )
 
+    return state
+
+
+# ------------------------------------------------------------------ #
+# Per-expert API for live streaming
+# ------------------------------------------------------------------ #
+
+
+def run_expert_turn(
+    state: CouncilState,
+    expert_def,
+    search_tool,
+    library_write,
+    library_read,
+    pdf_tool,
+    llm,
+    tasks_cfg: dict,
+    verbose: bool = False,
+) -> str:
+    """Run a single expert's debate turn and return their speech."""
+    speech = _run_single_turn(
+        expert_def=expert_def,
+        state=state,
+        search_tool=search_tool,
+        library_write=library_write,
+        library_read=library_read,
+        pdf_tool=pdf_tool,
+        llm=llm,
+        tasks_cfg=tasks_cfg,
+        verbose=verbose,
+    )
+    state.add_transcript_entry(
+        agent_name=expert_def.name,
+        discipline=expert_def.discipline,
+        speech=speech.strip(),
+        phase="debate",
+    )
+    return speech
+
+
+def run_scorecard(state: CouncilState, verbose: bool = False) -> CouncilState:
+    """Run the Fact-Checker to build the evidence scorecard from the transcript."""
+    from council.agents.fact_checker import build_fact_checker, parse_scorecard_output
+    from council.tools.library_tool import create_library_tools
+
+    _, library_read = create_library_tools()
+    search_tool = create_search_tool()
+
+    tasks_cfg = _load_tasks_config()
+    fc_agent = build_fact_checker(library_read=library_read, search_tool=search_tool)
+    fc_cfg = tasks_cfg["fact_checker_scorecard"]
+
+    fc_desc = fc_cfg["description"].format(
+        query=state.query,
+        transcript=state.transcript_text,
+    )
+    fc_desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for library searches."
+
+    fc_task = Task(
+        description=fc_desc,
+        expected_output=fc_cfg["expected_output"],
+        agent=fc_agent,
+    )
+
+    fc_crew = Crew(
+        agents=[fc_agent],
+        tasks=[fc_task],
+        verbose=verbose,
+    )
+
+    fc_result = fc_crew.kickoff()
+    raw_scorecard = fc_result.raw if hasattr(fc_result, "raw") else str(fc_result)
+
+    state.evidence_scorecard = parse_scorecard_output(raw_scorecard)
+    state.status = "auditing"
     return state

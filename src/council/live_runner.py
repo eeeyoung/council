@@ -75,8 +75,14 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
     # ── Phase C + D: Debate / Audit Loop ───────────────────────────────────
     yield "phase_start", {"phase": "C"}
 
-    from council.crews.debate_crew import run_debate
+    from council.crews.debate_crew import (
+        run_debate, run_expert_turn, run_scorecard, _load_tasks_config,
+    )
     from council.crews.audit_crew import run_audit_loop
+    from council.tools.search_tool import create_search_tool
+    from council.tools.library_tool import create_library_tools
+    from council.tools.pdf_tool import create_pdf_tool
+    from council.config import build_llm
 
     while state.status in ("debating", "auditing"):
 
@@ -84,32 +90,50 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             round_num = state.audit_round + 1
             yield "round_start", {"round": round_num}
 
-            # Track transcript length before debate so we only emit new entries
-            prev_len = len(state.transcript)
-            state = await asyncio.to_thread(run_debate, state, None, False)
-            save_state(state)
+            # Build shared tools once for all experts this round
+            search_tool = create_search_tool()
+            library_write, library_read = create_library_tools()
+            pdf_tool = create_pdf_tool()
+            llm = build_llm(temperature=0.8)
+            tasks_cfg = _load_tasks_config()
 
-            # Emit only the new messages from this round (debate + host entries)
-            for entry in state.transcript[prev_len:]:
-                if entry.phase in ("debate", "audit"):
-                    name = entry.agent_name
-                    discipline = entry.discipline
-                    # Typing indicator
-                    yield "debate_typing", {
-                        "name": name,
-                        "discipline": discipline,
-                        "round": round_num,
-                    }
-                    await asyncio.sleep(1.0)
-                    # Full message
-                    yield "debate_message", {
-                        "name": name,
-                        "discipline": discipline,
-                        "round": round_num,
-                        "content": entry.speech,
-                        "turn": entry.turn,
-                    }
-                    await asyncio.sleep(0.5)
+            # Run each expert one at a time — emit their speech immediately
+            for expert_def in state.experts:
+                # Typing indicator
+                yield "debate_typing", {
+                    "name": expert_def.name,
+                    "discipline": expert_def.discipline,
+                    "round": round_num,
+                }
+                await asyncio.sleep(1.0)
+
+                # Run the expert's turn (blocking — LLM must finish)
+                speech = await asyncio.to_thread(
+                    run_expert_turn,
+                    state=state,
+                    expert_def=expert_def,
+                    search_tool=search_tool,
+                    library_write=library_write,
+                    library_read=library_read,
+                    pdf_tool=pdf_tool,
+                    llm=llm,
+                    tasks_cfg=tasks_cfg,
+                )
+                save_state(state)
+
+                # Emit the expert's message immediately — real-time!
+                yield "debate_message", {
+                    "name": expert_def.name,
+                    "discipline": expert_def.discipline,
+                    "round": round_num,
+                    "content": speech.strip(),
+                    "turn": state.transcript[-1].turn if state.transcript else 1,
+                }
+                await asyncio.sleep(0.5)
+
+            # Scorecard
+            state = await asyncio.to_thread(run_scorecard, state, False)
+            save_state(state)
 
             # Write transcript and scorecard files for this round
             r = state.audit_round
@@ -124,8 +148,27 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             yield "scorecard_ready", {"round": r}
 
         if state.status == "auditing":
+            prev_len = len(state.transcript)
             state = await asyncio.to_thread(run_audit_loop, state, None, False)
             save_state(state)
+
+            # Emit audit-phase messages (Rapporteur, Discussant) in real-time
+            for entry in state.transcript[prev_len:]:
+                if entry.phase == "audit":
+                    yield "debate_typing", {
+                        "name": entry.agent_name,
+                        "discipline": entry.discipline,
+                        "round": state.audit_round + 1,
+                    }
+                    await asyncio.sleep(1.0)
+                    yield "debate_message", {
+                        "name": entry.agent_name,
+                        "discipline": entry.discipline,
+                        "round": state.audit_round + 1,
+                        "content": entry.speech,
+                        "turn": entry.turn,
+                    }
+                    await asyncio.sleep(0.5)
 
             if state.audit_history:
                 latest = state.audit_history[-1]
@@ -186,84 +229,4 @@ def _write_file(filename: str, content: str) -> None:
     (OUT_DIR / filename).write_text(content, encoding="utf-8")
 
 
-def _write_manifest(state: CouncilState, out_dir: Path) -> None:
-    """Write/update outputs/{session_id}_manifest.json for GUI consumption."""
-    import json
-
-    experts = []
-    for i, e in enumerate(state.experts):
-        expert_id = e.name.replace(".", "").replace(" ", "_").lower()
-        experts.append({
-            "id": expert_id,
-            "name": e.name,
-            "discipline": e.discipline,
-            "bias": e.bias,
-            "persona_prompt": e.persona_prompt,
-            "color_index": i,
-        })
-
-    research_files: list[dict] = []
-    for expert in experts:
-        f = out_dir / f"{state.session_id}_research_{expert['id']}.md"
-        if f.exists():
-            research_files.append({
-                "expert_id": expert["id"],
-                "expert_name": expert["name"],
-                "file": f.name,
-            })
-    agg = out_dir / f"{state.session_id}_research___aggregation__.md"
-    if agg.exists():
-        research_files.append({
-            "expert_id": "__aggregation__",
-            "expert_name": "Aggregator Summary",
-            "file": agg.name,
-        })
-
-    rounds: list[dict] = []
-    for r in range(state.max_audit_rounds + 2):
-        t = out_dir / f"{state.session_id}_transcript_r{r}.md"
-        s = out_dir / f"{state.session_id}_scorecard_r{r}.md"
-        c = out_dir / f"{state.session_id}_consensus_r{r + 1}.md"
-        if t.exists() or s.exists():
-            rounds.append({
-                "round": r,
-                "transcript": t.name if t.exists() else None,
-                "scorecard": s.name if s.exists() else None,
-                "consensus": c.name if c.exists() else None,
-            })
-
-    panel = out_dir / f"{state.session_id}_panel.json"
-    dossier = out_dir / f"{state.session_id}_dossier.md"
-
-    phases_complete: list[str] = []
-    if panel.exists():
-        phases_complete.append("A")
-    if research_files:
-        phases_complete.append("B")
-    if rounds:
-        phases_complete.append("C")
-    if any(r.get("consensus") for r in rounds):
-        phases_complete.append("D")
-    if dossier.exists():
-        phases_complete.append("E")
-
-    manifest = {
-        "session_id": state.session_id,
-        "query": state.query,
-        "status": state.status,
-        "created_at": state.created_at.isoformat(),
-        "experts": experts,
-        "audit_rounds": len(rounds),
-        "files": {
-            "panel": panel.name if panel.exists() else None,
-            "research": research_files,
-            "rounds": rounds,
-            "dossier": dossier.name if dossier.exists() else None,
-        },
-        "phases_complete": phases_complete,
-    }
-
-    out_dir.mkdir(exist_ok=True)
-    manifest_path = out_dir / f"{state.session_id}_manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+from council.manifest import write_manifest as _write_manifest

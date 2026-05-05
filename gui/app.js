@@ -8,7 +8,10 @@ let currentAnimationId = 0;
 let _liveResearch = {};        // {expert_id: {name, discipline, status:'researching'|'done', summary}}
 let _liveDebateMessages = [];  // [{name, discipline, round, content, turn}]
 let _liveCurrentRound  = 0;
+let _liveDossier = '';         // accumulated dossier text during streaming
 let _liveSSE = null;           // active EventSource, if any
+let _reconnectAttempts = 0;    // SSE reconnection counter
+let _reconnectTimer = null;    // reconnection timeout ID
 
 // When the GUI is served by council.server (port 8000) this is ''.
 // Override to 'http://localhost:8000' if you serve the GUI from a different origin.
@@ -33,8 +36,8 @@ function claimColorMeta(name) {
         label: e?.name ?? name,
     };
 }
-function hostColorClass(marker) {
-    return marker === '[HOST-A]' ? 'host-a' : 'host-b';
+function auditColorClass(marker) {
+    return marker === '[RAPPORTEUR]' ? 'rapporteur' : 'discussant';
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
@@ -77,7 +80,8 @@ function _esc(str) {
 
 // ─── Phase switching ──────────────────────────────────────────────────────────
 async function switchPhase(phaseId) {
-    if (!currentSession) {
+    // In live mode, allow panel phase without a loaded session (new session wizard)
+    if (!currentSession && !(window.SERVER_MODE === 'live' && phaseId === 'panel')) {
         await renderSessionPicker();
         return;
     }
@@ -185,13 +189,22 @@ async function loadSession(sessionId) {
 }
 
 function startNewSession() {
-    // Close any active SSE connection
-    if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
+    // Warn if a live session is actively running
+    if (_liveSSE) {
+        if (!confirm('A session pipeline is currently running. Starting a new session will abandon it. Continue?')) {
+            return;
+        }
+        _liveSSE.close();
+        _liveSSE = null;
+    }
 
     currentSession = null;
     _liveResearch = {};
     _liveDebateMessages = [];
     _liveCurrentRound = 0;
+    _liveDossier = '';
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    _reconnectAttempts = 0;
 
     if (window.SERVER_MODE === 'live') {
         panelWizardState.query = '';
@@ -667,39 +680,93 @@ function _renderLiveResearchPhase() {
         return;
     }
 
-    const cards = entries.map((r, i) => {
-        const spinning = r.status === 'researching';
-        const statusIcon = spinning
-            ? '<span class="live-research-spinner"></span>'
-            : '<span class="live-research-check">✓</span>';
-        const statusText = spinning ? 'Searching the literature…' : 'Research complete';
-        const cardClass = spinning ? 'researching' : 'research-done';
-        const summaryHtml = (!spinning && r.summary)
-            ? `<div class="live-research-summary markdown-content">${marked.parse(r.summary)}</div>`
-            : '';
-
-        return `
-            <div class="live-research-card ${cardClass}">
-                <div class="live-research-header">
-                    ${statusIcon}
-                    <strong>${_esc(r.name)}</strong>
-                    <span class="live-research-disc">${_esc(r.discipline)}</span>
-                </div>
-                <div class="live-research-status">${statusText}</div>
-                ${summaryHtml}
-            </div>`;
-    }).join('');
-
     const allDone = entries.every(r => r.status === 'done');
-    const headerMsg = allDone
-        ? `<p style="color:#22c55e;margin-bottom:20px;">✓ All ${entries.length} experts have completed their research.</p>`
-        : `<p style="color:var(--text-muted);margin-bottom:20px;">Experts are researching in parallel — results appear as they complete.</p>`;
 
-    contentBody.innerHTML = `
-        <div style="padding:8px 0;">
-            ${headerMsg}
-            <div class="live-research-grid">${cards}</div>
-        </div>`;
+    // While experts are still researching, show live status cards
+    if (!allDone) {
+        const cards = entries.map(r => {
+            const spinning = r.status === 'researching';
+            const statusIcon = spinning
+                ? '<span class="live-research-spinner"></span>'
+                : '<span class="live-research-check">✓</span>';
+            const statusText = spinning ? 'Searching the literature…' : 'Research complete';
+            const cardClass = spinning ? 'researching' : 'research-done';
+            const summaryHtml = (!spinning && r.summary)
+                ? `<div class="live-research-summary markdown-content">${marked.parse(r.summary)}</div>`
+                : '';
+
+            return `
+                <div class="live-research-card ${cardClass}">
+                    <div class="live-research-header">
+                        ${statusIcon}
+                        <strong>${_esc(r.name)}</strong>
+                        <span class="live-research-disc">${_esc(r.discipline)}</span>
+                    </div>
+                    <div class="live-research-status">${statusText}</div>
+                    ${summaryHtml}
+                </div>`;
+        }).join('');
+
+        contentBody.innerHTML = `
+            <div style="padding:8px 0;">
+                <p style="color:var(--text-muted);margin-bottom:20px;">Experts are researching in parallel — results appear as they complete.</p>
+                <div class="live-research-grid">${cards}</div>
+            </div>`;
+        return;
+    }
+
+    // All done — build research file list from _liveResearch and render tabbed view
+    const sid = currentSession?.session_id;
+    if (!sid) { return; }
+
+    const expertObjs = Object.entries(_liveResearch);
+    // Build file list matching the naming convention: {sid}_research_{expert_id}.md
+    const researchFiles = expertObjs.map(([id, r]) => ({
+        expert_id: id,
+        expert_name: r.name,
+        file: `${sid}_research_${id}.md`,
+    }));
+
+    let tabsHtml    = '<div class="sub-tabs">';
+    let contentHtml = '<div class="sub-tab-content">';
+
+    Promise.all(researchFiles.map(async (rf, i) => {
+        const activeClass = i === 0 ? 'active' : '';
+        const displayStyle = i === 0 ? 'block' : 'none';
+
+        tabsHtml += `<button class="sub-tab-btn ${activeClass}" onclick="switchSubTab(${i})">${_esc(rf.expert_name)}</button>`;
+
+        try {
+            let bodyText = await fetchText(outputUrl(rf.file));
+
+            bodyText = bodyText.replace(/^##\s+(Dr\.|Prof\.|Aggregator Summary).*?\n+/i, '');
+            bodyText = bodyText.replace(/^---\s*$/gm, '');
+
+            const stop = '(?=\\n\\n\\*\\*|\\n\\n### |\\n\\n## |\\n\\n---|$)';
+            let parsed = bodyText
+                .replace(new RegExp(`\\*\\*Source:\\*\\*\\s*(.*?)${stop}`,             'gs'), '<div class="finding-block source-block"><strong>Source:</strong> $1</div>')
+                .replace(new RegExp(`\\*\\*Supporting Source:\\*\\*\\s*(.*?)${stop}`,  'gs'), '<div class="finding-block support-block"><strong>Supporting Source:</strong> $1</div>')
+                .replace(new RegExp(`\\*\\*Key Finding:\\*\\*\\s*(.*?)${stop}`,        'gs'), '<div class="finding-block key-block"><strong>Key Finding:</strong> $1</div>')
+                .replace(new RegExp(`\\*\\*Relevance[^\\*]*:\\*\\*\\s*(.*?)${stop}`,  'gs'), '<div class="finding-block rel-block"><strong>Relevance:</strong> $1</div>');
+
+            const sections = parsed.split(/\n## /);
+            let tabHtml = '';
+            if (sections[0].trim())
+                tabHtml += `<div class="markdown-content header-section">${marked.parse(sections[0])}</div>`;
+            for (let j = 1; j < sections.length; j++)
+                tabHtml += `<div class="section-card"><div class="markdown-content">${marked.parse('## ' + sections[j])}</div></div>`;
+
+            contentHtml += `<div class="sub-tab-pane" id="expert-pane-${i}" style="display:${displayStyle};">${tabHtml}</div>`;
+        } catch (e) {
+            contentHtml += `<div class="sub-tab-pane" id="expert-pane-${i}" style="display:${displayStyle};">
+                <p style="color:red">Failed to load ${_esc(rf.expert_name)}: ${_esc(e.message)}</p></div>`;
+        }
+    })).then(() => {
+        contentBody.innerHTML = `
+            <div style="padding:8px 0;">
+                <p style="color:#22c55e;margin-bottom:20px;">✓ All ${entries.length} experts have completed their research.</p>
+                ${tabsHtml}</div>${contentHtml}</div>`;
+    });
 }
 
 window.switchSubTab = function (index) {
@@ -762,13 +829,13 @@ function _renderLiveDebatePhase() {
             html += `<div class="round-divider"><span>── Round ${msg.round} ──</span></div>`;
         }
 
-        const isHost = msg.name === 'Host A' || msg.name === 'Host B';
-        const colorCls = isHost
-            ? (msg.name === 'Host A' ? 'host-a' : 'host-b')
+        const isAudit = msg.name === 'Rapporteur' || msg.name === 'Discussant';
+        const colorCls = isAudit
+            ? (msg.name === 'Rapporteur' ? 'rapporteur' : 'discussant')
             : expertColorClass(msg.name);
-        const sideCls = isHost ? 'message-right' : '';
-        const avatar = isHost
-            ? (msg.name === 'Host A' ? '⚖' : '🔬')
+        const sideCls = isAudit ? 'message-right' : '';
+        const avatar = isAudit
+            ? (msg.name === 'Rapporteur' ? '⚖' : '🔬')
             : msg.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
 
         html += `
@@ -793,7 +860,7 @@ function _renderLiveDebatePhase() {
 }
 
 async function _animateTranscript(text, animId, chatContainer, roundIndex) {
-    const msgRegex = /(\[Turn \d+\]|\[HOST-A\]|\[HOST-B\]) \*\*(.*?)\*\* \((.*?)\):\n([\s\S]*?)(?=\n(?:\[Turn \d+\]|\[HOST-A\]|\[HOST-B\])|$)/g;
+    const msgRegex = /(\[Turn \d+\]|\[RAPPORTEUR\]|\[DISCUSSANT\]) \*\*(.*?)\*\* \((.*?)\):\n([\s\S]*?)(?=\n(?:\[Turn \d+\]|\[RAPPORTEUR\]|\[DISCUSSANT\])|$)/g;
 
     const messages = [];
     let currentRound = roundIndex + 1;
@@ -810,9 +877,9 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 
         messages.push({
             marker, name, meta, content, round: currentRound,
-            isHost:  marker === '[HOST-A]' || marker === '[HOST-B]',
-            isHostA: marker === '[HOST-A]',
-            isHostB: marker === '[HOST-B]',
+            isAudit:  marker === '[RAPPORTEUR]' || marker === '[DISCUSSANT]',
+            isRapporteur: marker === '[RAPPORTEUR]',
+            isDiscussant: marker === '[DISCUSSANT]',
         });
     }
 
@@ -833,14 +900,14 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
         }
 
         // Typing indicator
-        const indicatorText = msg.isHostA
-            ? `<strong>Synthesis Host</strong> is drafting consensus<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
-            : msg.isHostB
-            ? `<strong>Peer Reviewer</strong> is auditing the synthesis<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
+        const indicatorText = msg.isRapporteur
+            ? `<strong>Rapporteur</strong> is drafting consensus<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
+            : msg.isDiscussant
+            ? `<strong>Discussant</strong> is auditing the synthesis<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
             : `<strong>${_esc(msg.name)}</strong> is formulating argument<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
 
         const indicator = document.createElement('div');
-        indicator.className = `chat-indicator ${msg.isHost ? 'indicator-right' : ''}`;
+        indicator.className = `chat-indicator ${msg.isAudit ? 'indicator-right' : ''}`;
         indicator.innerHTML = indicatorText;
         chatContainer.appendChild(indicator);
         chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -851,11 +918,11 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 
         // Message bubble
         const msgWrapper = document.createElement('div');
-        msgWrapper.className = `chat-message ${msg.isHost ? 'message-right ' + hostColorClass(msg.marker) : expertColorClass(msg.name)}`;
+        msgWrapper.className = `chat-message ${msg.isAudit ? 'message-right ' + auditColorClass(msg.marker) : expertColorClass(msg.name)}`;
 
         const avatar = document.createElement('div');
         avatar.className = 'chat-avatar';
-        avatar.textContent = msg.isHostA ? '⚖' : msg.isHostB ? '🔬'
+        avatar.textContent = msg.isRapporteur ? '⚖' : msg.isDiscussant ? '🔬'
             : msg.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
 
         const bubbleWrapper = document.createElement('div');
@@ -868,7 +935,7 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
         const bubble = document.createElement('div');
         bubble.className = 'chat-bubble markdown-content';
 
-        if (msg.isHostB) {
+        if (msg.isDiscussant) {
             const approved = /\"approved\":\s*true/i.test(msg.content) || /\bAPPROVED\b/i.test(msg.content);
             const badge = document.createElement('div');
             badge.className = `verdict-badge ${approved ? 'verdict-approved' : 'verdict-rejected'}`;
@@ -878,7 +945,7 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
             bubbleWrapper.append(header, bubble);
         }
 
-        msg.isHost ? msgWrapper.append(bubbleWrapper, avatar) : msgWrapper.append(avatar, bubbleWrapper);
+        msg.isAudit ? msgWrapper.append(bubbleWrapper, avatar) : msgWrapper.append(avatar, bubbleWrapper);
         chatContainer.appendChild(msgWrapper);
 
         // Word-by-word typewriter
@@ -901,9 +968,32 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 // ─── Phase D: Evidence Scorecard ─────────────────────────────────────────────
 
 async function renderScorecardPhase() {
-    // Live mode: data not yet written to files
+    // Live mode: show scorecard-relevant audit messages
     if (_liveSSE) {
-        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Evidence scorecard will appear after the symposium completes.</p>';
+        const auditMsgs = _liveDebateMessages.filter(m =>
+            m.name === 'Rapporteur' || m.name === 'Discussant'
+        );
+        if (!auditMsgs.length) {
+            contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Evidence scorecard will be compiled after the debate round…</p>';
+            return;
+        }
+        contentBody.innerHTML = `
+            <div style="padding:16px;">
+                <h3 style="color:var(--text-muted);margin-bottom:12px;">Live Audit Summary</h3>
+                ${auditMsgs.map(m => `
+                    <div class="chat-message message-right ${m.name === 'Rapporteur' ? 'rapporteur' : 'discussant'}">
+                        <div class="chat-avatar">${m.name === 'Rapporteur' ? '⚖' : '🔬'}</div>
+                        <div class="chat-bubble-wrapper">
+                            <div class="chat-header">
+                                <strong>${_esc(m.name)}</strong>
+                                <span>${_esc(m.discipline || '')}</span>
+                            </div>
+                            <div class="chat-bubble markdown-content">${marked.parse(m.content)}</div>
+                        </div>
+                    </div>
+                `).join('')}
+                <p style="color:var(--text-muted);text-align:center;margin-top:16px;">Scorecard will finalize when the audit completes…</p>
+            </div>`;
         return;
     }
 
@@ -937,14 +1027,20 @@ async function renderScorecardPhase() {
         return (filter === 'all' ? entries : entries.filter(e => e.name === filter))
             .map((e, i) => {
                 const meta   = claimColorMeta(e.name);
-                const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
+                const isUncited = e.url === 'UNCITED' || e.url.startsWith('⚠');
+                const sourceHtml = isUncited
+                    ? `<span class="claim-source claim-uncited">⚠ UNCITED — no verifiable source found</span>`
+                    : (() => {
+                        const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
+                        return `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
+                            View Source → <span class="claim-domain">${_esc(domain)}</span>
+                        </a>`;
+                    })();
                 return `
-                    <div class="claim-card ${meta.cls}" id="claim-${i}">
+                    <div class="claim-card ${meta.cls} ${isUncited ? 'claim-uncited-card' : ''}" id="claim-${i}">
                         <div class="claim-expert-chip">${_esc(e.name)}</div>
                         <p class="claim-text">"${_esc(e.claim)}"</p>
-                        <a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
-                            View Source → <span class="claim-domain">${_esc(domain)}</span>
-                        </a>
+                        ${sourceHtml}
                     </div>`;
             }).join('');
     }
@@ -976,9 +1072,22 @@ async function renderScorecardPhase() {
 // ─── Phase E: Final Dossier ───────────────────────────────────────────────────
 
 async function renderDossierPhase() {
-    // Live mode: dossier not yet compiled
+    // Live mode: show streaming dossier content
     if (_liveSSE) {
-        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Dossier is being compiled — it will appear here when ready.</p>';
+        if (!_liveDossier) {
+            contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Dossier is being compiled — it will appear here as it streams in…</p>';
+            return;
+        }
+        contentBody.innerHTML = `
+            <div style="padding:16px;position:relative;">
+                <div style="position:sticky;top:0;background:var(--bg-primary);padding:8px 12px;border-bottom:1px solid var(--border-color);margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+                    <span style="color:var(--text-muted);">📄 Dossier compiling in real-time</span>
+                    <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+                </div>
+                <div class="markdown-content" style="max-width:900px;margin:0 auto;">
+                    ${marked.parse(_liveDossier)}
+                </div>
+            </div>`;
         return;
     }
 
@@ -1059,6 +1168,10 @@ function _connectLiveSSE(sessionId) {
     _liveResearch = {};
     _liveDebateMessages = [];
     _liveCurrentRound = 0;
+    _liveDossier = '';
+    _reconnectAttempts = 0;
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
     _liveSSE = new EventSource(`${API_BASE}/api/sessions/${sessionId}/live`);
 
     _liveSSE.addEventListener('session_start', (e) => {
@@ -1133,8 +1246,14 @@ function _connectLiveSSE(sessionId) {
         _renderDebateMessage(data);
     });
 
-    _liveSSE.addEventListener('scorecard_ready', () => {
+    _liveSSE.addEventListener('scorecard_ready', (e) => {
+        const data = JSON.parse(e.data);
         showToast('Evidence scorecard compiled', 'success');
+        // Refresh scorecard phase if user is viewing it
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'scorecard') {
+            renderScorecardPhase();
+        }
     });
 
     _liveSSE.addEventListener('audit_result', (e) => {
@@ -1146,9 +1265,14 @@ function _connectLiveSSE(sessionId) {
         showToast(verdict, data.approved ? 'success' : 'error');
     });
 
-    _liveSSE.addEventListener('dossier_chunk', () => {
-        // Dossier chunks accumulate during Phase E; after session_complete
-        // the full session loads and Phase E renders from files.
+    _liveSSE.addEventListener('dossier_chunk', (e) => {
+        const data = JSON.parse(e.data);
+        _liveDossier += data.chunk || '';
+        // Refresh dossier phase if user is viewing it
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'dossier') {
+            renderDossierPhase();
+        }
     });
 
     _liveSSE.addEventListener('session_complete', (e) => {
@@ -1162,7 +1286,19 @@ function _connectLiveSSE(sessionId) {
 
     _liveSSE.onerror = () => {
         if (_liveSSE && _liveSSE.readyState === EventSource.CLOSED) {
+            _liveSSE.close();
             _liveSSE = null;
+            if (_reconnectAttempts < 3) {
+                _reconnectAttempts++;
+                const delay = Math.pow(2, _reconnectAttempts) * 1000; // 2s, 4s, 8s
+                showToast(`Connection lost. Reconnecting in ${delay / 1000}s (attempt ${_reconnectAttempts}/3)…`, 'warning');
+                _reconnectTimer = setTimeout(() => {
+                    _reconnectTimer = null;
+                    _connectLiveSSE(sessionId);
+                }, delay);
+            } else {
+                showToast('Connection lost after 3 attempts. The pipeline continues on the server — reload the session when complete.', 'error');
+            }
             return;
         }
         showToast('Live connection interrupted. The pipeline continues on the server.', 'error');
@@ -1184,8 +1320,8 @@ function _renderDebateTyping(data) {
     const div = document.createElement('div');
     div.id = 'typing-indicator';
     div.className = 'chat-indicator';
-    const isHost = data.name === 'Host A' || data.name === 'Host B';
-    div.innerHTML = isHost
+    const isAudit = data.name === 'Rapporteur' || data.name === 'Discussant';
+    div.innerHTML = isAudit
         ? `<strong>${_esc(data.name)}</strong> is drafting<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
         : `<strong>${_esc(data.name)}</strong> is formulating<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
     chat.appendChild(div);
@@ -1195,18 +1331,18 @@ function _renderDebateTyping(data) {
 function _renderDebateMessage(data) {
     const chat = document.getElementById('chat-container');
     if (!chat) return;
-    const isHost = data.name === 'Host A' || data.name === 'Host B';
-    const colorCls = isHost
-        ? (data.name === 'Host A' ? 'host-a' : 'host-b')
+    const isAudit = data.name === 'Rapporteur' || data.name === 'Discussant';
+    const colorCls = isAudit
+        ? (data.name === 'Rapporteur' ? 'rapporteur' : 'discussant')
         : expertColorClass(data.name);
 
     const wrapper = document.createElement('div');
-    wrapper.className = `chat-message ${isHost ? 'message-right ' + colorCls : colorCls}`;
+    wrapper.className = `chat-message ${isAudit ? 'message-right ' + colorCls : colorCls}`;
 
     const avatar = document.createElement('div');
     avatar.className = 'chat-avatar';
-    avatar.textContent = isHost
-        ? (data.name === 'Host A' ? '⚖' : '🔬')
+    avatar.textContent = isAudit
+        ? (data.name === 'Rapporteur' ? '⚖' : '🔬')
         : data.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
 
     const bubbleWrap = document.createElement('div');
@@ -1214,14 +1350,14 @@ function _renderDebateMessage(data) {
 
     const header = document.createElement('div');
     header.className = 'chat-header';
-    header.innerHTML = `<strong>${_esc(data.name)}</strong> <span>${isHost ? 'Round ' + _liveCurrentRound : _esc(data.discipline || '')}</span>`;
+    header.innerHTML = `<strong>${_esc(data.name)}</strong> <span>${isAudit ? 'Round ' + _liveCurrentRound : _esc(data.discipline || '')}</span>`;
 
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble markdown-content';
     bubble.innerHTML = marked.parse(data.content);
 
     bubbleWrap.append(header, bubble);
-    isHost ? wrapper.append(bubbleWrap, avatar) : wrapper.append(avatar, bubbleWrap);
+    isAudit ? wrapper.append(bubbleWrap, avatar) : wrapper.append(avatar, bubbleWrap);
     chat.appendChild(wrapper);
     chat.scrollTop = chat.scrollHeight;
 }

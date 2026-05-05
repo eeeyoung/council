@@ -5,7 +5,13 @@ moderator_curation:
     "{query}"
 
     Your task is to design the optimal expert panel to investigate this question.
-    Generate exactly {max_experts} expert personas. Each expert must bring
+
+    FIRST: Use the web search tool to research the current state of this field.
+    Identify real sub-disciplines, active research directions, and methodological
+    debates relevant to this topic. This will help you generate grounded,
+    specific personas rather than generic ones.
+
+    THEN: Generate exactly {max_experts} expert personas. Each expert must bring
     a genuinely distinct disciplinary perspective. Avoid redundancy. Do not
     generate fewer than {max_experts} experts.
 
@@ -29,6 +35,10 @@ expert_research:
        from your disciplinary perspective.
     2. For each source, extract the key finding most relevant to the research question.
     3. Store each finding in the shared library using the library write tool.
+       For each finding, include the search_reference noting which search result it
+       came from (e.g. "from search result #2 about quantum error correction").
+       The source_url MUST be the exact URL from your search results — do not guess
+       or fabricate URLs. The system will verify URLs before accepting them.
     4. Summarize your research findings in a structured report.
 
     Focus on evidence that YOUR discipline uniquely contributes — avoid duplicating
@@ -100,7 +110,7 @@ expert_debate:
     agent to contribute to the debate. If there are previous agents, the **Response to Peers**
     section should be a substantive response to their claims. 
 
-host_a_synthesis:
+rapporteur_synthesis:
   description: >
     Research Question: "{query}"
 
@@ -146,7 +156,7 @@ host_a_synthesis:
     
     But try to reach a consensus if possible, highlighting the points of agreement.
 
-host_b_review:
+discussant_review:
   description: >
     Research Question: "{query}"
 
@@ -158,11 +168,12 @@ host_b_review:
     {evidence_scorecard}
     === END SCORECARD ===
 
-    Audit this synthesis as a hostile peer reviewer. Check for:
+    Audit this synthesis as a discussant. Check for:
     1. Lazy consensus (agreement without evidence)
     2. Physical, chemical, or logical constraint violations
     3. Claims not supported by the evidence scorecard
     4. Ignored minority expert viewpoints
+    5. Citations flagged as unverified or inaccessible in the evidence scorecard
 
     Return your verdict as a JSON object with:
       - "approved": true or false
@@ -174,7 +185,36 @@ host_b_review:
     A JSON object with keys: approved (bool), verdict (string),
     issues (list of strings), conflict_mandate (string or null).
 
-recorder_scorecard:
+rapporteur_rebuttal:
+  description: >
+    Research Question: "{query}"
+
+    === YOUR ORIGINAL SYNTHESIS ===
+    {synthesis}
+    === END SYNTHESIS ===
+
+    === DISCUSSANT CRITIQUE ===
+    {discussant_critique}
+    === END CRITIQUE ===
+
+    === EVIDENCE SCORECARD ===
+    {evidence_scorecard}
+    === END SCORECARD ===
+
+    The Discussant has rejected your synthesis. Your task:
+    1. Address EVERY issue raised in the critique — do not skip any
+    2. Use the library_read tool to verify claims and find supporting or
+       contradicting evidence for each disputed point
+    3. Revise the synthesis to fix all identified problems with evidence
+    4. If you believe a specific criticism is unfounded, explain why with
+       evidence — do not make superficial changes just to appease the reviewer
+    5. Preserve what was strong about the original synthesis
+
+    Return the fully revised synthesis document.
+  expected_output: >
+    A revised synthesis document using the standard synthesis format.
+
+fact_checker_scorecard:
   description: >
     Research Question: "{query}"
 
@@ -186,6 +226,10 @@ recorder_scorecard:
     For each significant factual claim in the transcript:
     1. Query the library to find the supporting or contradicting evidence
     2. Map the claim to its source
+    3. For sources not marked as verified in the library, use the web search
+       tool to check whether the cited source actually exists
+    4. If a source cannot be found via web search, mark it as "⚠ UNVERIFIED"
+       instead of silently accepting it
 
     Return a JSON array of evidence entries. Each entry must have:
       - "claim": the specific claim made
@@ -194,7 +238,26 @@ recorder_scorecard:
   expected_output: >
     A JSON array of evidence mapping objects.
 
-recorder_dossier:
+aggregator_compile:
+  description: >
+    The following experts have each conducted independent research on the question:
+    "{query}"
+
+    Experts: {expert_names}
+
+    Review each expert's findings (provided as context) and produce a structured
+    summary with one section per expert. Each section should include:
+    1. Expert name and discipline
+    2. Their key findings (bullet points)
+    3. Their preliminary hypothesis
+
+    Keep each section concise (100-150 words max). Do not add new research —
+    only organise and summarise what was found.
+  expected_output: >
+    A structured Markdown document with one section per expert summarising
+    their research findings and preliminary hypothesis.
+
+dossier_author_compile:
   description: >
     Compile the final research dossier for the following:
 
@@ -210,7 +273,11 @@ recorder_dossier:
     3. **Key Findings by Discipline** (one subsection per expert)
     4. **Synthesis & Unified Hypothesis**
     5. **Dissenting Views & Open Questions**
-    6. **Bibliography** (all cited sources from the evidence scorecard)
+    6. **Bibliography** — CRITICAL: Copy EXACTLY the source URLs and DOIs from the evidence
+       scorecard. Do NOT attribute sources to the expert panel members — they are AI personas,
+       not real researchers. Do NOT invent author names or paper titles. Each bibliography
+       entry must be ONLY the raw URL or DOI from the scorecard, one per line. Sources
+       marked as UNCITED or unverified should be listed as "⚠ UNCITED" or "⚠ UNVERIFIED".
   expected_output: >
     A complete, publication-ready Markdown research document using EXACTLY this format. DO NOT deviate:
 
@@ -239,5 +306,6 @@ recorder_dossier:
     ---
 
     ## Bibliography
-    - [Citation 1]
-    - [Citation 2]
+    - https://doi.org/10.1234/example
+    - https://arxiv.org/abs/1234.5678
+    - ⚠ UNCITED

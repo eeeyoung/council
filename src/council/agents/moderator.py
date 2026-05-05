@@ -6,6 +6,10 @@ ModeratorAgent — analyzes the user query and generates the expert panel.
 The Moderator is the first agent to run. It receives the raw research question
 and outputs a structured JSON list of ExpertDefinition objects. The user then
 reviews and approves (or edits) the panel before Phase B begins.
+
+The Moderator has web search access so it can identify real sub-disciplines and
+active research directions for cutting-edge or niche topics, producing more
+grounded panels instead of generic ones.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from crewai import Agent, Crew, Process, Task
 import council.config  # noqa: F401 — triggers load_dotenv at import time
 from council.config import build_llm
 from council.state import CouncilState, ExpertDefinition
+from council.tools.search_tool import WebSearchTool
 
 # ------------------------------------------------------------------ #
 # Config
@@ -42,16 +47,23 @@ def _load_config() -> tuple[dict, dict]:
 # ------------------------------------------------------------------ #
 
 
-def build_moderator_agent(llm: object | None = None) -> Agent:
+def build_moderator_agent(
+    search_tool: WebSearchTool | None = None,
+    llm: object | None = None,
+) -> Agent:
     """Construct the crewAI Moderator agent from config."""
     if llm is None:
         llm = build_llm()
     agents_cfg, _ = _load_config()
     cfg = agents_cfg["moderator"]
+
+    tools = [search_tool] if search_tool else []
+
     return Agent(
         role=cfg["role"],
         goal=cfg["goal"],
         backstory=cfg["backstory"] + "\n\n" + cfg["output_instructions"],
+        tools=tools,
         llm=llm,
         verbose=True,
         allow_delegation=False,
@@ -85,7 +97,8 @@ def run_curation(state: CouncilState) -> list[ExpertDefinition]:
     Returns a list of ExpertDefinition objects.
     Raises ValueError if the LLM output cannot be parsed.
     """
-    agent = build_moderator_agent()
+    search_tool = WebSearchTool()
+    agent = build_moderator_agent(search_tool=search_tool)
     task = build_curation_task(agent, state)
 
     crew = Crew(

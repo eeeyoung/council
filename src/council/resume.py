@@ -54,7 +54,7 @@ def _parse_transcript(transcript_path: Path, expert_names: set[str]) -> list[Tra
     text = transcript_path.read_text(encoding="utf-8")
 
     pattern = re.compile(
-        r"\[Turn\s+(\d+)\]\s+\*\*(.+?)\*\*\s+\((.+?)\):\s*(.*?)(?=\[Turn\s+\d+\]|\[HOST-[AB]\]|\Z)",
+        r"\[Turn\s+(\d+)\]\s+\*\*(.+?)\*\*\s+\((.+?)\):\s*(.*?)(?=\[Turn\s+\d+\]|\[RAPPORTEUR\]|\[DISCUSSANT\]|\Z)",
         re.DOTALL,
     )
     entries: list[TranscriptEntry] = []
