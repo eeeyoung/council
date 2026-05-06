@@ -879,31 +879,15 @@ function _renderLiveResearchPhase() {
         return;
     }
 
-    // ── B2/B3: Keep showing shelves with transition message ────────────
-    if ((status.startsWith('B2') || status.startsWith('B3')) && !allDone) {
-        const cards = entries.map(r => {
-            const spinning = r.status === 'researching';
-            const statusIcon = spinning
-                ? '<span class="live-research-spinner"></span>'
-                : '<span class="live-research-check">✓</span>';
-            const statusText = spinning ? 'Verifying…' : 'Research complete';
-            const cardClass = spinning ? 'researching' : 'research-done';
-            return `
-                <div class="live-research-card ${cardClass}">
-                    <div class="live-research-header">
-                        ${statusIcon}
-                        <strong>${_esc(r.name)}</strong>
-                        <span class="live-research-disc">${_esc(r.discipline)}</span>
-                    </div>
-                    <div class="live-research-status">${statusText}</div>
-                </div>`;
-        }).join('');
+    // ── B2: Stamp Verification ─────────────────────────────────────────
+    if (status.startsWith('B2') && !allDone) {
+        _renderStampVerification(entries);
+        return;
+    }
 
-        contentBody.innerHTML = `
-            <div style="padding:8px 0;">
-                <p style="color:var(--text-muted);margin-bottom:20px;">${_esc(status)}</p>
-                <div class="live-research-grid">${cards}</div>
-            </div>`;
+    // ── B3: Thought Bubbles ────────────────────────────────────────────
+    if (status.startsWith('B3') && !allDone) {
+        _renderThoughtBubbles(entries);
         return;
     }
 
@@ -1414,7 +1398,10 @@ function _connectLiveSSE(sessionId) {
     _liveDossier = '';
     _liveResearchStatus = '';
     _shelfBooks = [];
+    _stampSources = [];
     if (_shelvesTimer) { clearInterval(_shelvesTimer); _shelvesTimer = null; }
+    if (_stampTimer) { clearInterval(_stampTimer); _stampTimer = null; }
+    if (_bubbleTimer) { clearInterval(_bubbleTimer); _bubbleTimer = null; }
     _reconnectAttempts = 0;
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
@@ -1733,6 +1720,163 @@ function _renderLibraryShelves(experts) {
     for (let i = 0; i < 3; i++) addBook();
     // Then add periodically
     _shelvesTimer = setInterval(addBook, 600);
+}
+
+// ── Stamp Verification Animation (Phase B2) ──────────────────────────────────
+
+let _stampTimer = null;
+let _stampSources = [];
+
+function _renderStampVerification(experts) {
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+
+    // Generate mock sources from the shelves
+    if (_shelfBooks.length && !_stampSources.length) {
+        _stampSources = _shelfBooks.map((b, i) => ({
+            id: i, label: b.title, color: b.color, status: 'pending'
+        }));
+    }
+    if (!_stampSources.length) {
+        // Fallback if no shelves data
+        for (let i = 0; i < 12; i++) {
+            _stampSources.push({
+                id: i,
+                label: _BOOK_TITLES[Math.floor(Math.random() * _BOOK_TITLES.length)],
+                color: colors[Math.floor(Math.random() * colors.length)],
+                status: 'pending',
+            });
+        }
+    }
+
+    function renderConveyor() {
+        const items = _stampSources.map((s, i) => {
+            const stampIcon = s.status === 'verified' ? '<span style="color:#22c55e;">✓</span>'
+                : s.status === 'rejected' ? '<span style="color:#ef4444;">✗</span>'
+                : '<span style="color:var(--text-muted);">○</span>';
+            return `
+                <div class="stamp-item" style="
+                    display:flex;align-items:center;gap:8px;padding:6px 10px;
+                    background:var(--bg-primary);border-radius:6px;
+                    border:1px solid var(--border-color);
+                    font-size:12px;transition:all 0.3s;
+                    ${s.status === 'rejected' ? 'opacity:0.5;text-decoration:line-through;' : ''}
+                ">
+                    <span style="width:8px;height:8px;border-radius:2px;background:${s.color};flex-shrink:0;"></span>
+                    <span style="color:var(--text-primary);flex:1;">${s.label}</span>
+                    ${stampIcon}
+                </div>`;
+        }).join('');
+
+        const v = _stampSources.filter(s => s.status === 'verified').length;
+        const r = _stampSources.filter(s => s.status === 'rejected').length;
+        const p = _stampSources.filter(s => s.status === 'pending').length;
+
+        contentBody.innerHTML = `
+            <div style="padding:20px 16px;">
+                <p style="color:var(--text-muted);margin-bottom:16px;text-align:center;">
+                    ${_esc(_liveResearchStatus || 'B2 · Verifying sources…')}
+                </p>
+                <div style="display:flex;justify-content:center;gap:24px;margin-bottom:16px;font-size:13px;">
+                    <span style="color:#22c55e;">✓ ${v} verified</span>
+                    <span style="color:var(--text-muted);">○ ${p} pending</span>
+                    <span style="color:#ef4444;">✗ ${r} rejected</span>
+                </div>
+                <div style="max-width:500px;margin:0 auto;display:flex;flex-direction:column;gap:4px;"
+                    id="stamp-conveyor">
+                    ${items}
+                </div>
+            </div>`;
+    }
+
+    renderConveyor();
+
+    // Stamp items one by one
+    if (_stampTimer) clearInterval(_stampTimer);
+    _stampTimer = setInterval(() => {
+        const pending = _stampSources.filter(s => s.status === 'pending');
+        if (!pending.length) { clearInterval(_stampTimer); return; }
+        const next = pending[0];
+        // ~80% verified, ~20% rejected (simulated)
+        next.status = Math.random() < 0.8 ? 'verified' : 'rejected';
+        renderConveyor();
+    }, 500);
+}
+
+// ── Thought Bubbles Animation (Phase B3) ─────────────────────────────────────
+
+let _bubbleTimer = null;
+
+function _renderThoughtBubbles(experts) {
+    if (_stampTimer) { clearInterval(_stampTimer); _stampTimer = null; }
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+
+    const _THOUGHTS = [
+        'Analysing structural properties…',
+        'Cross-referencing findings…',
+        'Evaluating statistical significance…',
+        'Synthesising disciplinary insights…',
+        'Comparing methodological approaches…',
+        'Identifying emergent patterns…',
+        'Forming preliminary hypotheses…',
+        'Weighing evidence strength…',
+    ];
+
+    function renderBubbles() {
+        const cards = experts.map((r, i) => {
+            const thought = _THOUGHTS[Math.floor(Math.random() * _THOUGHTS.length)];
+            return `
+                <div class="thought-card" style="
+                    text-align:center;padding:16px;
+                    background:var(--bg-primary);border-radius:12px;
+                    border:2px solid ${colors[i % colors.length]}22;
+                ">
+                    <div class="thought-avatar" style="
+                        width:48px;height:48px;border-radius:50%;
+                        background:${colors[i % colors.length]}22;
+                        border:2px solid ${colors[i % colors.length]};
+                        color:${colors[i % colors.length]};
+                        display:flex;align-items:center;justify-content:center;
+                        margin:0 auto 8px;font-size:20px;font-weight:700;
+                    ">${_esc(r.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 2))}</div>
+                    <div style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                        ${_esc(r.name)}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">
+                        ${_esc(r.discipline)}
+                    </div>
+                    <div class="thought-bubble" style="
+                        position:relative;padding:10px 14px;
+                        background:${colors[i % colors.length]}0d;
+                        border:1px solid ${colors[i % colors.length]}33;
+                        border-radius:16px;font-size:11px;
+                        color:var(--text-muted);animation:pulse 2s ease-in-out infinite;
+                    ">
+                        <div class="thought-dots" style="display:flex;gap:3px;justify-content:center;">
+                            <span style="animation:dotPulse 1.4s infinite;">.</span>
+                            <span style="animation:dotPulse 1.4s .2s infinite;">.</span>
+                            <span style="animation:dotPulse 1.4s .4s infinite;">.</span>
+                        </div>
+                        <div style="margin-top:4px;font-style:italic;">${thought}</div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        contentBody.innerHTML = `
+            <div style="padding:20px 16px;">
+                <p style="color:var(--text-muted);margin-bottom:20px;text-align:center;">
+                    ${_esc(_liveResearchStatus || 'B3 · Analysing sources — forming evidence-based opinions…')}
+                </p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;
+                    max-width:700px;margin:0 auto;" id="thought-grid">
+                    ${cards}
+                </div>
+            </div>`;
+    }
+
+    renderBubbles();
+
+    if (_bubbleTimer) clearInterval(_bubbleTimer);
+    _bubbleTimer = setInterval(renderBubbles, 2000);
 }
 
 // ─── Toast notifications ────────────────────────────────────────────────────
