@@ -50,6 +50,17 @@ class EvidenceEntry(BaseModel):
     relevance_note: Optional[str] = None
 
 
+class SourcePoolEntry(BaseModel):
+    """One candidate source deposited by an expert during Phase B1 collection."""
+
+    agent_name: str
+    url: str
+    title: str = ""
+    snippet: str = ""  # the search result excerpt
+    status: str = "pending"  # pending | verified | rejected
+    rejection_reason: str = ""
+
+
 class AuditResult(BaseModel):
     """Discussant's verdict on a synthesis."""
 
@@ -76,6 +87,10 @@ class CouncilState(BaseModel):
     max_experts: int = 6
 
     # --- Research (Phase B) ---
+    source_pool: list[SourcePoolEntry] = Field(
+        default_factory=list,
+        description="Candidate sources deposited during B1 collection, gated in B2",
+    )
     research_summaries: dict[str, str] = Field(
         default_factory=dict,
         description="Keyed by expert name → their research summary text",

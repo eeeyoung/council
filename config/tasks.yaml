@@ -36,6 +36,71 @@ moderator_curation:
   expected_output: >
     A valid JSON array of expert definition objects, with no surrounding text.
 
+expert_collect:
+  description: >
+    You are {name}, a {discipline} expert.
+
+    Research Question: "{query}"
+
+    PHASE B1 — COLLECTION ONLY. Do NOT form opinions or make claims yet.
+
+    1. Use the web_search tool to find 3-5 highly relevant sources.
+    2. For EACH source, deposit it into the Source Pool using source_pool_write:
+       - url: the EXACT URL from the search result
+       - title: the title of the article/paper
+       - snippet: the text excerpt from the search result (copy-paste it)
+       - agent_name: {name}
+    3. Do NOT use library_write. Do NOT write findings or opinions.
+       Just collect sources. The Fact-Checker will verify them next.
+
+  expected_output: >
+    A brief confirmation of how many sources were deposited into the pool.
+
+gate_check:
+  description: >
+    Research Question: "{query}"
+
+    === SOURCE POOL ===
+    {source_pool_text}
+    === END POOL ===
+
+    PHASE B2 — GATE CHECK. Verify every source in the pool before experts use them.
+
+    For each source in the pool:
+    1. Check the URL resolves (try to access it).
+    2. Search the web for the title to confirm the source actually exists.
+    3. If verified → mark as "verified" and store the finding in the shared
+       library using library_write (with the source_quote from the snippet).
+    4. If fabricated or unreachable → mark as "rejected" with a reason.
+
+    Return a JSON array of gate results. Each entry must have:
+      - "url": the source URL
+      - "agent_name": who submitted it
+      - "status": "verified" or "rejected"
+      - "reason": brief explanation (empty if verified)
+
+  expected_output: >
+    A JSON array of gate check results.
+
+expert_analyze:
+  description: >
+    You are {name}, a {discipline} expert.
+
+    Research Question: "{query}"
+
+    PHASE B3 — ANALYSIS. Now you can form opinions using VERIFIED sources.
+
+    The shared library contains only sources that passed verification.
+    Use library_read to find evidence, then:
+    1. Extract key findings from the verified sources
+    2. Form your evidence-based opinions and preliminary hypothesis
+    3. Store each finding in the library using library_write
+       (include source_quote — copy the exact sentence from the source)
+    4. Produce your structured research summary
+
+  expected_output: >
+    A structured research summary using the standard format (see below).
+
 expert_research:
   description: >
     You are {name}, a {discipline} expert.

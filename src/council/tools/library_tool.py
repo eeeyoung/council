@@ -27,6 +27,7 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 import council.config  # noqa: F401
+from council.state import SourcePoolEntry
 
 # ------------------------------------------------------------------ #
 # Singleton ChromaDB client + collection registry
@@ -398,5 +399,92 @@ class LibraryReadTool(BaseTool):
             return f"Library read failed: {exc}"
 
 
+# ------------------------------------------------------------------ #
+# Source Pool — Phase B1 collection (pre-verification)
+# ------------------------------------------------------------------ #
+
+# In-memory source pool keyed by session_id
+_source_pools: dict[str, list] = {}
+
+
+class SourcePoolWriteInput(BaseModel):
+    session_id: str = Field(..., description="The current COUNCIL session ID.")
+    url: str = Field(..., description="The URL from your search result.")
+    title: str = Field(default="", description="The title of the source.")
+    snippet: str = Field(default="", description="The search result snippet or excerpt.")
+    agent_name: str = Field(..., description="Your expert name.")
+
+
+class SourcePoolWriteTool(BaseTool):
+    """
+    Deposit a candidate source into the Source Pool during Phase B1 (Collection).
+    Do NOT make claims or opinions — just record the source you found.
+    The Fact-Checker will verify all pool entries before analysis begins.
+    """
+
+    name: str = "source_pool_write"
+    description: str = (
+        "Deposit a source you found via web search into the Source Pool. "
+        "Provide: session_id, url (exact URL from search result), title, "
+        "snippet (the text excerpt from the search result), and agent_name. "
+        "Do NOT make claims or opinions — just record what you found. "
+        "The Fact-Checker will verify all sources before you can use them."
+    )
+    args_schema: Type[BaseModel] = SourcePoolWriteInput
+
+    def _run(self, session_id: str, url: str, title: str = "",
+             snippet: str = "", agent_name: str = "") -> str:
+        if session_id not in _source_pools:
+            _source_pools[session_id] = []
+        pool = _source_pools[session_id]
+        # Deduplicate by URL + agent
+        for entry in pool:
+            if entry.url == url and entry.agent_name == agent_name:
+                return f"⚠ Source already in pool: {url}"
+        pool.append(SourcePoolEntry(
+            url=url, title=title, snippet=snippet, agent_name=agent_name,
+        ))
+        return f"✓ Source deposited in pool ({len(pool)} total): {title or url}"
+
+
+class SourcePoolReadInput(BaseModel):
+    session_id: str = Field(..., description="The current COUNCIL session ID.")
+
+
+class SourcePoolReadTool(BaseTool):
+    """Read all sources currently in the Source Pool."""
+
+    name: str = "source_pool_read"
+    description: str = "List all sources currently in the Source Pool with their verification status."
+    args_schema: Type[BaseModel] = SourcePoolReadInput
+
+    def _run(self, session_id: str) -> str:
+        pool = _source_pools.get(session_id, [])
+        if not pool:
+            return "The Source Pool is empty."
+        lines = [f"Source Pool ({len(pool)} entries):\n"]
+        for i, e in enumerate(pool, 1):
+            status = e.status or "pending"
+            lines.append(f"[{i}] [{status}] {e.title or e.url}")
+            lines.append(f"    URL: {e.url}")
+            lines.append(f"    From: {e.agent_name}")
+            lines.append("")
+        return "\n".join(lines)
+
+
+def get_source_pool(session_id: str) -> list[SourcePoolEntry]:
+    """Get the source pool for a session (for gate check)."""
+    return _source_pools.get(session_id, [])
+
+
+def clear_source_pool(session_id: str) -> None:
+    """Clear the source pool after gate check."""
+    _source_pools.pop(session_id, None)
+
+
 def create_library_tools() -> tuple[LibraryWriteTool, LibraryReadTool]:
     return LibraryWriteTool(), LibraryReadTool()
+
+
+def create_source_pool_tools() -> tuple[SourcePoolWriteTool, SourcePoolReadTool]:
+    return SourcePoolWriteTool(), SourcePoolReadTool()
