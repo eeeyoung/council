@@ -9,6 +9,9 @@ from __future__ import annotations
 import os
 from typing import Type
 
+import os
+from typing import Type
+
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -41,10 +44,18 @@ class WebSearchTool(BaseTool):
     args_schema: Type[BaseModel] = SearchInput
 
     def _run(self, query: str, max_results: int = 5) -> str:
+        backend = os.getenv("SEARCH_BACKEND", "auto").strip().lower()
         tavily_key = council.config.get_tavily_key()
-        if tavily_key:
+
+        if backend == "duckduckgo":
+            return self._duckduckgo_search(query, max_results)
+        elif backend == "tavily":
+            if not tavily_key:
+                return "TAVILY_API_KEY not set. Set it in .env or switch to SEARCH_BACKEND=duckduckgo."
             return self._tavily_search(query, max_results, tavily_key)
-        else:
+        else:  # auto: Tavily if key exists, else DuckDuckGo
+            if tavily_key:
+                return self._tavily_search(query, max_results, tavily_key)
             return self._duckduckgo_search(query, max_results)
 
     def _tavily_search(self, query: str, max_results: int, api_key: str) -> str:
