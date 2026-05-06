@@ -856,9 +856,13 @@ async function renderResearchPhase() {
     contentBody.innerHTML = tabsHtml + '</div>' + contentHtml + '</div>';
 }
 
+let _shelvesTimer = null;
+let _shelfBooks = [];
+
 function _renderLiveResearchPhase() {
     const entries = Object.values(_liveResearch);
-    if (!entries.length) {
+    const status = _liveResearchStatus || '';
+    if (!entries.length && !status.startsWith('B1')) {
         contentBody.innerHTML = `
             <div style="text-align:center;padding:60px 0;">
                 <div class="loading-spinner"></div>
@@ -869,7 +873,41 @@ function _renderLiveResearchPhase() {
 
     const allDone = entries.every(r => r.status === 'done');
 
-    // While experts are still researching, show live status cards
+    // ── B1: Library Shelves Filling ────────────────────────────────────
+    if (status.startsWith('B1') && !allDone) {
+        _renderLibraryShelves(entries);
+        return;
+    }
+
+    // ── B2/B3: Keep showing shelves with transition message ────────────
+    if ((status.startsWith('B2') || status.startsWith('B3')) && !allDone) {
+        const cards = entries.map(r => {
+            const spinning = r.status === 'researching';
+            const statusIcon = spinning
+                ? '<span class="live-research-spinner"></span>'
+                : '<span class="live-research-check">✓</span>';
+            const statusText = spinning ? 'Verifying…' : 'Research complete';
+            const cardClass = spinning ? 'researching' : 'research-done';
+            return `
+                <div class="live-research-card ${cardClass}">
+                    <div class="live-research-header">
+                        ${statusIcon}
+                        <strong>${_esc(r.name)}</strong>
+                        <span class="live-research-disc">${_esc(r.discipline)}</span>
+                    </div>
+                    <div class="live-research-status">${statusText}</div>
+                </div>`;
+        }).join('');
+
+        contentBody.innerHTML = `
+            <div style="padding:8px 0;">
+                <p style="color:var(--text-muted);margin-bottom:20px;">${_esc(status)}</p>
+                <div class="live-research-grid">${cards}</div>
+            </div>`;
+        return;
+    }
+
+    // ── Default: status cards ──────────────────────────────────────────
     if (!allDone) {
         const cards = entries.map(r => {
             const spinning = r.status === 'researching';
@@ -894,21 +932,20 @@ function _renderLiveResearchPhase() {
                 </div>`;
         }).join('');
 
-        const statusMsg = _liveResearchStatus || 'Experts are collecting sources…';
         contentBody.innerHTML = `
             <div style="padding:8px 0;">
-                <p style="color:var(--text-muted);margin-bottom:20px;">${_esc(statusMsg)}</p>
+                <p style="color:var(--text-muted);margin-bottom:20px;">${_esc(status || 'Experts are researching…')}</p>
                 <div class="live-research-grid">${cards}</div>
             </div>`;
         return;
     }
 
     // All done — build research file list from _liveResearch and render tabbed view
+    if (_shelvesTimer) { clearInterval(_shelvesTimer); _shelvesTimer = null; }
     const sid = currentSession?.session_id;
     if (!sid) { return; }
 
     const expertObjs = Object.entries(_liveResearch);
-    // Build file list matching the naming convention: {sid}_research_{expert_id}.md
     const researchFiles = expertObjs.map(([id, r]) => ({
         expert_id: id,
         expert_name: r.name,
@@ -1375,6 +1412,9 @@ function _connectLiveSSE(sessionId) {
     _liveDebateMessages = [];
     _liveCurrentRound = 0;
     _liveDossier = '';
+    _liveResearchStatus = '';
+    _shelfBooks = [];
+    if (_shelvesTimer) { clearInterval(_shelvesTimer); _shelvesTimer = null; }
     _reconnectAttempts = 0;
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
@@ -1598,11 +1638,101 @@ function _renderAuditVerdict(verdict, approved) {
 }
 
 function _refreshResearchPhase() {
-    // Only re-render if we're currently on the research phase
     const activeBtn = document.querySelector('.nav-btn.active');
     if (activeBtn && activeBtn.dataset.phase === 'research') {
         _renderLiveResearchPhase();
     }
+}
+
+// ── Library Shelves Animation (Phase B1) ─────────────────────────────────────
+
+const _BOOK_TITLES = [
+    'arXiv:2305.12', 'Nature 592', 'Science 378', 'Cell 185', 'PNAS 120',
+    'Phys. Rev. D', 'J. Neurosci.', 'Lancet 401', 'ACM Comput.', 'IEEE Trans.',
+    'NeurIPS 23', 'ICML Proc.', 'J. Fluid Mech.', 'Angew. Chem.', 'PLoS ONE',
+    'eLife 12', 'Acta Mater.', 'Astrophys. J.', 'Geology 51', 'Mol. Cell 83',
+];
+
+function _renderLibraryShelves(experts) {
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+
+    // Build expert legend
+    const legend = experts.map((r, i) => `
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:2px;background:${colors[i % colors.length]};flex-shrink:0;"></span>
+            <span style="color:var(--text-primary);">${_esc(r.name)}</span>
+        </div>
+    `).join('');
+
+    // Build 5 shelf rows
+    let shelvesHtml = '';
+    for (let s = 0; s < 5; s++) {
+        shelvesHtml += `
+            <div class="library-shelf" style="
+                position:relative;height:48px;margin-bottom:8px;
+                border-bottom:3px solid var(--border-color);
+                display:flex;align-items:flex-end;gap:3px;padding:0 4px;
+            " id="shelf-${s}">
+            </div>`;
+    }
+
+    contentBody.innerHTML = `
+        <div style="padding:20px 16px;">
+            <p style="color:var(--text-muted);margin-bottom:12px;text-align:center;">
+                ${_esc(_liveResearchStatus || 'B1 · Collecting sources — scouring the literature…')}
+            </p>
+            <div style="display:flex;justify-content:center;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
+                ${legend}
+            </div>
+            <div class="library-shelves" style="
+                max-width:700px;margin:0 auto;padding:16px;
+                background:var(--bg-secondary);border-radius:12px;
+            " id="library-shelves">
+                <div style="
+                    display:flex;align-items:center;gap:6px;
+                    color:var(--text-muted);font-size:12px;margin-bottom:12px;
+                ">
+                    <span>📚</span> <span id="shelf-book-count">0 sources collected</span>
+                </div>
+                ${shelvesHtml}
+            </div>
+        </div>`;
+
+    // Start adding books to shelves
+    _shelfBooks = [];
+    if (_shelvesTimer) clearInterval(_shelvesTimer);
+
+    function addBook() {
+        const shelfIndex = Math.floor(Math.random() * 5);
+        const shelf = document.getElementById(`shelf-${shelfIndex}`);
+        if (!shelf) return;
+
+        const ei = _shelfBooks.length % experts.length;
+        const color = colors[ei % colors.length];
+        const title = _BOOK_TITLES[Math.floor(Math.random() * _BOOK_TITLES.length)];
+        const h = 18 + Math.random() * 24; // random book height
+
+        const book = document.createElement('div');
+        book.className = 'shelf-book';
+        book.style.cssText = `
+            width:${42 + Math.random() * 28}px;height:${h}px;
+            background:${color};opacity:0.85;border-radius:2px 2px 0 0;
+            flex-shrink:0;transition:all 0.3s;
+            font-size:8px;color:#fff;display:flex;align-items:flex-end;
+            padding:1px 2px;writing-mode:vertical-rl;overflow:hidden;
+        `;
+        book.textContent = title;
+        shelf.appendChild(book);
+
+        _shelfBooks.push({ shelf: shelfIndex, color, title });
+        const count = document.getElementById('shelf-book-count');
+        if (count) count.textContent = `${_shelfBooks.length} sources collected`;
+    }
+
+    // Initial burst
+    for (let i = 0; i < 3; i++) addBook();
+    // Then add periodically
+    _shelvesTimer = setInterval(addBook, 600);
 }
 
 // ─── Toast notifications ────────────────────────────────────────────────────
