@@ -132,160 +132,114 @@ def _build_aggregation_task(
 # ------------------------------------------------------------------ #
 
 
-def run_research(
-    state: CouncilState,
-    console: Console | None = None,
-    verbose: bool = False,
-) -> CouncilState:
-    """
-    Run Phase B: Collect → Verify → Analyze pipeline.
+# ------------------------------------------------------------------ #
+# Shared setup for research sub-phases
+# ------------------------------------------------------------------ #
 
-    B1: Experts search and deposit candidate sources into the Source Pool
-    B2: Fact-Checker verifies each source, moves verified ones to the library
-    B3: Experts analyze only verified sources, form opinions, write summaries
-    """
+def _setup_research(state: CouncilState, verbose: bool = False):
+    """Create shared tools and config for research sub-phases."""
+    tools = {
+        "search": create_search_tool(),
+        "library_write": create_library_tools()[0],
+        "library_read": create_library_tools()[1],
+        "pdf": create_pdf_tool(),
+        "pool_write": create_source_pool_tools()[0],
+        "pool_read": create_source_pool_tools()[1],
+    }
+    return tools, build_llm(temperature=0.8), _load_tasks_config()
+
+
+def run_collection(state: CouncilState, console: Console | None = None,
+                   verbose: bool = False) -> CouncilState:
+    """B1: Experts search and deposit candidate sources into the Source Pool."""
     if console is None:
         console = Console()
+    tools, llm, tasks_cfg = _setup_research(state, verbose)
 
-    if not state.experts:
-        raise ValueError("No experts defined. Run Phase A (panel curation) first.")
-
-    tasks_cfg = _load_tasks_config()
-    search_tool = create_search_tool()
-    library_write, library_read = create_library_tools()
-    pdf_tool = create_pdf_tool()
-    pool_write, pool_read = create_source_pool_tools()
-    llm = build_llm(temperature=0.8)
-
-    console.print(f"[dim]  Experts: {len(state.experts)}[/dim]\n")
-
-    # ── B1: Collection (parallel) ──────────────────────────────────────
-    console.print("[bold cyan]⟳  Phase B1 — Experts are collecting sources…[/bold cyan]\n")
-
-    collect_agents = []
-    collect_tasks = []
+    collect_agents, collect_tasks = [], []
     for expert_def in state.experts:
         agent = build_expert_agent(
-            expert=expert_def,
-            search_tool=search_tool,
-            library_write=library_write,
-            library_read=library_read,
-            pdf_tool=pdf_tool,
-            llm=llm,
-            verbose=verbose,
+            expert=expert_def, search_tool=tools["search"],
+            library_write=tools["library_write"], library_read=tools["library_read"],
+            pdf_tool=tools["pdf"], llm=llm, verbose=verbose,
         )
-        agent.tools.append(pool_write)  # Give expert access to source pool
+        agent.tools.append(tools["pool_write"])
         collect_agents.append(agent)
-
         cfg = tasks_cfg["expert_collect"]
         desc = cfg["description"].format(
-            name=expert_def.name,
-            discipline=expert_def.discipline,
-            query=state.query,
+            name=expert_def.name, discipline=expert_def.discipline, query=state.query,
         )
         desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for all tool calls."
-        collect_tasks.append(Task(
-            description=desc,
-            expected_output=cfg["expected_output"],
-            agent=agent,
-            async_execution=True,
-        ))
+        collect_tasks.append(Task(description=desc, expected_output=cfg["expected_output"],
+                                  agent=agent, async_execution=True))
 
-    crew_b1 = Crew(
-        agents=collect_agents,
-        tasks=collect_tasks,
-        process=Process.sequential,
-        verbose=verbose,
-    )
-    crew_b1.kickoff()
-
-    # Populate state.source_pool from in-memory pool
+    Crew(agents=collect_agents, tasks=collect_tasks, process=Process.sequential,
+         verbose=verbose).kickoff()
     state.source_pool = get_source_pool(state.session_id)
     console.print(f"[dim]  Source pool: {len(state.source_pool)} entries collected[/dim]\n")
+    return state
 
-    # ── B2: Gate Check ─────────────────────────────────────────────────
-    console.print("[bold yellow]⟳  Phase B2 — Fact-Checker is verifying sources…[/bold yellow]\n")
 
+def run_gate_check(state: CouncilState, console: Console | None = None,
+                   verbose: bool = False) -> CouncilState:
+    """B2: Fact-Checker verifies each source, moves verified ones to the library."""
+    if console is None:
+        console = Console()
+    tools, llm, tasks_cfg = _setup_research(state, verbose)
     from council.agents.fact_checker import build_fact_checker
 
     pool_text = _render_source_pool(state.source_pool)
-    fc_agent = build_fact_checker(library_read=library_read, search_tool=search_tool)
+    fc_agent = build_fact_checker(library_read=tools["library_read"], search_tool=tools["search"])
     cfg = tasks_cfg["gate_check"]
     desc = cfg["description"].format(query=state.query, source_pool_text=pool_text)
     desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for library writes."
 
     gate_task = Task(description=desc, expected_output=cfg["expected_output"], agent=fc_agent)
-    crew_b2 = Crew(agents=[fc_agent], tasks=[gate_task], process=Process.sequential, verbose=verbose)
-    gate_result = crew_b2.kickoff()
-
-    # Parse gate results and update pool status
+    gate_result = Crew(agents=[fc_agent], tasks=[gate_task], process=Process.sequential,
+                       verbose=verbose).kickoff()
     _apply_gate_results(state, gate_result)
-    verified_count = sum(1 for e in state.source_pool if e.status == "verified")
-    rejected_count = sum(1 for e in state.source_pool if e.status == "rejected")
-    console.print(
-        f"[bold green]✓ Gate check complete.[/bold green] "
-        f"{verified_count} verified, {rejected_count} rejected.\n"
-    )
+    verified = sum(1 for e in state.source_pool if e.status == "verified")
+    rejected = sum(1 for e in state.source_pool if e.status == "rejected")
+    console.print(f"[bold green]✓ Gate check complete.[/bold green] {verified} verified, {rejected} rejected.\n")
+    return state
 
-    # ── B3: Analysis (parallel) ────────────────────────────────────────
-    console.print("[bold cyan]⟳  Phase B3 — Experts are analyzing verified sources…[/bold cyan]\n")
 
-    analyze_agents = []
-    analyze_tasks = []
+def run_analysis(state: CouncilState, console: Console | None = None,
+                 verbose: bool = False) -> CouncilState:
+    """B3: Experts analyze verified sources, form opinions, write summaries."""
+    if console is None:
+        console = Console()
+    tools, llm, tasks_cfg = _setup_research(state, verbose)
+
+    analyze_agents, analyze_tasks = [], []
     for expert_def in state.experts:
         agent = build_expert_agent(
-            expert=expert_def,
-            search_tool=search_tool,
-            library_write=library_write,
-            library_read=library_read,
-            pdf_tool=pdf_tool,
-            llm=llm,
-            verbose=verbose,
+            expert=expert_def, search_tool=tools["search"],
+            library_write=tools["library_write"], library_read=tools["library_read"],
+            pdf_tool=tools["pdf"], llm=llm, verbose=verbose,
         )
         analyze_agents.append(agent)
-
         cfg = tasks_cfg["expert_analyze"]
         desc = cfg["description"].format(
-            name=expert_def.name,
-            discipline=expert_def.discipline,
-            query=state.query,
+            name=expert_def.name, discipline=expert_def.discipline, query=state.query,
         )
         if state.expectation_criteria:
-            desc += (
-                f"\n\n=== SYMPOSIUM EXPECTATION ===\n"
-                f"{state.expectation_criteria}"
-            )
+            desc += f"\n\n=== SYMPOSIUM EXPECTATION ===\n{state.expectation_criteria}"
         desc += f"\n\nIMPORTANT: Use session_id='{state.session_id}' for all tool calls."
-        analyze_tasks.append(Task(
-            description=desc,
-            expected_output=cfg["expected_output"],
-            agent=agent,
-            async_execution=True,
-        ))
+        analyze_tasks.append(Task(description=desc, expected_output=cfg["expected_output"],
+                                  agent=agent, async_execution=True))
 
-    # Aggregation waits for all analysis tasks
     aggregator_agent, agg_task = _build_aggregation_task(
-        agents=analyze_agents,
-        research_tasks=analyze_tasks,
-        state=state,
-        tasks_cfg=tasks_cfg,
-        llm=llm,
+        agents=analyze_agents, research_tasks=analyze_tasks, state=state,
+        tasks_cfg=tasks_cfg, llm=llm,
     )
-
     all_agents = analyze_agents + [aggregator_agent]
     all_tasks = analyze_tasks + [agg_task]
+    result = Crew(agents=all_agents, tasks=all_tasks, process=Process.sequential,
+                  verbose=verbose).kickoff()
 
-    crew_b3 = Crew(
-        agents=all_agents,
-        tasks=all_tasks,
-        process=Process.sequential,
-        verbose=verbose,
-    )
-    result = crew_b3.kickoff()
-
-    # Extract outputs
     tasks_output = getattr(result, "tasks_output", [])
-    for i, (expert_def, task) in enumerate(zip(state.experts, analyze_tasks)):
+    for i, (expert_def, _task) in enumerate(zip(state.experts, analyze_tasks)):
         if i < len(tasks_output):
             out = tasks_output[i]
             text = getattr(out, "exported_output", None) or getattr(out, "raw", None) or str(out)
@@ -298,22 +252,38 @@ def run_research(
             state.research_summaries[expert_def.name] = "(No output captured)"
 
     if tasks_output:
-        agg_output = tasks_output[-1]
-        agg_text = agg_output.raw if hasattr(agg_output, "raw") else str(agg_output)
+        agg_out = tasks_output[-1]
+        agg_text = agg_out.raw if hasattr(agg_out, "raw") else str(agg_out)
         state.research_summaries["__aggregation__"] = agg_text
 
     state.status = "debating"
     clear_source_pool(state.session_id)
-
-    console.print(
-        f"\n[bold green]✓  Research complete.[/bold green] "
-        f"{len(state.experts)} experts completed.\n"
-    )
+    console.print(f"\n[bold green]✓  Research complete.[/bold green] {len(state.experts)} experts completed.\n")
     for expert in state.experts:
         summary = state.research_summaries.get(expert.name, "")
         preview = summary[:100].replace("\n", " ") + "…" if summary else "(no output)"
         console.print(f"  [cyan]•[/cyan] [bold]{expert.name}[/bold]: {preview}")
+    return state
 
+
+def run_research(
+    state: CouncilState,
+    console: Console | None = None,
+    verbose: bool = False,
+) -> CouncilState:
+    """Run the full Phase B pipeline: Collect → Verify → Analyze."""
+    if console is None:
+        console = Console()
+    if not state.experts:
+        raise ValueError("No experts defined. Run Phase A (panel curation) first.")
+    console.print(f"[dim]  Experts: {len(state.experts)}[/dim]\n")
+
+    console.print("[bold cyan]⟳  Phase B1 — Experts are collecting sources…[/bold cyan]\n")
+    state = run_collection(state, console, verbose)
+    console.print("[bold yellow]⟳  Phase B2 — Fact-Checker is verifying sources…[/bold yellow]\n")
+    state = run_gate_check(state, console, verbose)
+    console.print("[bold cyan]⟳  Phase B3 — Experts are analyzing verified sources…[/bold cyan]\n")
+    state = run_analysis(state, console, verbose)
     return state
 
 

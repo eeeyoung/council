@@ -34,6 +34,7 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
 
     # ── Phase B: Collect → Verify → Analyze ──────────────────────────────
     yield "phase_start", {"phase": "B"}
+    from council.crews.research_crew import run_collection, run_gate_check, run_analysis
 
     # Announce each expert before collection begins
     for expert in state.experts:
@@ -45,12 +46,22 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
         }
         await asyncio.sleep(0.15)
 
-    from council.crews.research_crew import run_research
+    # B1 — Collection
+    yield "research_status", {"message": "B1 · Collecting sources — scouring the literature for candidate evidence…"}
+    await asyncio.sleep(0.3)
+    state = await asyncio.to_thread(run_collection, state, None, False)
+    save_state(state)
 
-    yield "research_status", {"message": "B1 · Collecting sources — experts are searching the web…"}
-    await asyncio.sleep(0.2)
+    # B2 — Gate Check
+    yield "research_status", {"message": "B2 · Verifying sources — fact-checker is validating each reference…"}
+    await asyncio.sleep(0.3)
+    state = await asyncio.to_thread(run_gate_check, state, None, False)
+    save_state(state)
 
-    state = await asyncio.to_thread(run_research, state, None, False)
+    # B3 — Analysis
+    yield "research_status", {"message": "B3 · Analysing sources — experts are forming evidence-based opinions…"}
+    await asyncio.sleep(0.3)
+    state = await asyncio.to_thread(run_analysis, state, None, False)
     save_state(state)
 
     # Emit research_complete for each expert with full summary
