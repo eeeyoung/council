@@ -6,6 +6,7 @@ let currentAnimationId = 0;
 
 // Live-mode data stores (populated by SSE events)
 let _liveResearch = {};        // {expert_id: {name, discipline, status:'researching'|'done', summary}}
+let _liveResearchStatus = '';  // current sub-phase message (B1/B2/B3)
 let _liveDebateMessages = [];  // [{name, discipline, round, content, turn}]
 let _liveCurrentRound  = 0;
 let _liveDossier = '';         // accumulated dossier text during streaming
@@ -748,9 +749,10 @@ function _renderLiveResearchPhase() {
                 </div>`;
         }).join('');
 
+        const statusMsg = _liveResearchStatus || 'Experts are collecting sources…';
         contentBody.innerHTML = `
             <div style="padding:8px 0;">
-                <p style="color:var(--text-muted);margin-bottom:20px;">Experts are researching in parallel — results appear as they complete.</p>
+                <p style="color:var(--text-muted);margin-bottom:20px;">${_esc(statusMsg)}</p>
                 <div class="live-research-grid">${cards}</div>
             </div>`;
         return;
@@ -1253,6 +1255,12 @@ function _connectLiveSSE(sessionId) {
                 currentSession.phases_complete.push(data.phase);
             }
         }
+    });
+
+    _liveSSE.addEventListener('research_status', (e) => {
+        const data = JSON.parse(e.data);
+        _liveResearchStatus = data.message || '';
+        _refreshResearchPhase();
     });
 
     _liveSSE.addEventListener('research_start', (e) => {

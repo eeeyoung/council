@@ -32,10 +32,10 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
 
     yield "session_start", {"session_id": session_id, "query": query}
 
-    # ── Phase B: Parallel Research ─────────────────────────────────────────
+    # ── Phase B: Collect → Verify → Analyze ──────────────────────────────
     yield "phase_start", {"phase": "B"}
 
-    # Announce each expert before research begins
+    # Announce each expert before collection begins
     for expert in state.experts:
         expert_id = _safe_id(expert.name)
         yield "research_start", {
@@ -46,6 +46,9 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
         await asyncio.sleep(0.15)
 
     from council.crews.research_crew import run_research
+
+    yield "research_status", {"message": "B1 · Collecting sources — experts are searching the web…"}
+    await asyncio.sleep(0.2)
 
     state = await asyncio.to_thread(run_research, state, None, False)
     save_state(state)
