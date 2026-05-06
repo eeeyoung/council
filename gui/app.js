@@ -1027,8 +1027,10 @@ function _renderLiveDebatePhase() {
         return;
     }
 
-    // Render all accumulated messages into the chat container
-    let html = '<div class="chat-container" id="chat-container">';
+    // Render podium + chat container
+    const podium = _podiumInitialized ? _renderPodium() : '';
+    let html = podium;
+    html += '<div class="chat-container" id="chat-container">';
     let lastRound = 0;
 
     for (const msg of msgs) {
@@ -1399,6 +1401,10 @@ function _connectLiveSSE(sessionId) {
     _liveResearchStatus = '';
     _shelfBooks = [];
     _stampSources = [];
+    _podiumInitialized = false;
+    // Remove old podium
+    const oldPodium = document.getElementById('podium-stage');
+    if (oldPodium) oldPodium.remove();
     if (_shelvesTimer) { clearInterval(_shelvesTimer); _shelvesTimer = null; }
     if (_stampTimer) { clearInterval(_stampTimer); _stampTimer = null; }
     if (_bubbleTimer) { clearInterval(_bubbleTimer); _bubbleTimer = null; }
@@ -1470,19 +1476,22 @@ function _connectLiveSSE(sessionId) {
     _liveSSE.addEventListener('round_start', (e) => {
         const data = JSON.parse(e.data);
         _liveCurrentRound = data.round;
+        _initPodium();
         showToast(`Round ${data.round} started`, 'info');
     });
 
     _liveSSE.addEventListener('debate_typing', (e) => {
         const data = JSON.parse(e.data);
         _renderDebateTyping(data);
+        _updatePodium(data.name);
     });
 
     _liveSSE.addEventListener('debate_message', (e) => {
         const data = JSON.parse(e.data);
-        _renderDebateTyping(null); // remove typing indicator
+        _renderDebateTyping(null);
         _liveDebateMessages.push(data);
         _renderDebateMessage(data);
+        _updatePodium(null); // clear spotlight
     });
 
     _liveSSE.addEventListener('scorecard_ready', (e) => {
@@ -1557,6 +1566,77 @@ function _connectLiveSSE(sessionId) {
 }
 
 // ─── Live debate DOM helpers ────────────────────────────────────────────────
+
+// ── Podium Spotlight (Phase C) ────────────────────────────────────────────────
+
+let _podiumInitialized = false;
+
+function _renderPodium() {
+    const experts = currentSession?.experts || [];
+    if (!experts.length) return '';
+
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+    const pods = experts.map((e, i) => `
+        <div class="podium-spot" data-name="${_esc(e.name)}" style="
+            display:flex;flex-direction:column;align-items:center;gap:4px;
+            transition:all 0.5s;opacity:0.35;flex:1;max-width:120px;
+        ">
+            <div class="podium-avatar" style="
+                width:44px;height:44px;border-radius:50%;
+                background:${colors[i % colors.length]}22;
+                border:2px solid ${colors[i % colors.length]};
+                color:${colors[i % colors.length]};
+                display:flex;align-items:center;justify-content:center;
+                font-size:18px;font-weight:700;transition:all 0.5s;
+            ">${_esc((e.name || '').replace(/^(Dr\.|Prof\.) /, '').substring(0, 2))}</div>
+            <div style="font-size:10px;font-weight:600;color:var(--text-primary);text-align:center;
+                line-height:1.2;">${_esc(e.name)}</div>
+        </div>`).join('');
+
+    return `
+        <div id="podium-stage" style="
+            position:relative;height:100px;max-width:600px;margin:0 auto 12px;
+            background:linear-gradient(to top,var(--bg-secondary),transparent);
+            border-radius:12px;overflow:hidden;
+        ">
+            <div style="
+                position:absolute;top:8px;left:50%;transform:translateX(-50%);
+                width:60px;height:3px;border-radius:2px;
+                background:radial-gradient(circle at center,var(--text-muted),transparent);
+                opacity:0.4;
+            "></div>
+            <div style="
+                position:absolute;bottom:0;left:0;right:0;height:2px;
+                background:var(--border-color);opacity:0.2;
+            "></div>
+            <div style="
+                display:flex;justify-content:center;align-items:flex-end;
+                gap:4px;padding:0 16px 8px;height:100%;
+            ">${pods}</div>
+        </div>`;
+}
+
+function _initPodium() {
+    _podiumInitialized = true;
+}
+
+function _updatePodium(activeName) {
+    const spots = document.querySelectorAll('.podium-spot');
+    spots.forEach(spot => {
+        const name = spot.dataset.name;
+        if (activeName && name === activeName) {
+            spot.style.opacity = '1';
+            spot.style.transform = 'translateY(-8px)';
+            const avatar = spot.querySelector('.podium-avatar');
+            if (avatar) { avatar.style.boxShadow = '0 0 20px rgba(167,139,250,0.5)'; avatar.style.transform = 'scale(1.15)'; }
+        } else {
+            spot.style.opacity = '0.35';
+            spot.style.transform = 'translateY(0)';
+            const avatar = spot.querySelector('.podium-avatar');
+            if (avatar) { avatar.style.boxShadow = 'none'; avatar.style.transform = 'scale(1)'; }
+        }
+    });
+}
 
 function _renderDebateTyping(data) {
     const chat = document.getElementById('chat-container');
