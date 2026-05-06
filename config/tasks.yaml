@@ -177,7 +177,7 @@ expert_debate:
   expected_output: >
     A substantive debate contribution using EXACTLY this markdown format. DO NOT deviate:
 
-    [Turn X] **[Your Name]** ([Your Discipline]):
+    [Turn X]:
     [Your opening argument]
 
     **Response to Peers:**
@@ -203,13 +203,34 @@ rapporteur_synthesis:
     {evidence_scorecard}
     === END SCORECARD ===
 
-    Synthesize the debate into a concise unified hypothesis (150 words max).
-    Weave together the strongest consensus points, acknowledge any irreconcilable
-    disagreement, and state the unified position the evidence supports.
-    Be direct — no headings, no bullet lists, just a tight paragraph.
+    Synthesize the above into a unified hypothesis. Your synthesis must:
+    1. Identify the 2-3 strongest points of genuine consensus
+    2. Acknowledge the most significant point of expert disagreement
+    3. Propose a unified hypothesis that incorporates the best-supported elements
+    4. Note which aspects require further investigation
   expected_output: >
-    A single paragraph (150 words max) stating the unified hypothesis.
-    No headings, no sections. Just the synthesis.
+    A structured synthesis document using EXACTLY this markdown format. DO NOT deviate:
+
+    # Phase C Synthesis: The Unified Hypothesis
+
+    ## 1. Consensus Points
+    - [Point 1]
+    - [Point 2]
+    ---
+
+    ## 2. Key Disagreements
+    [Describe the primary conflict between experts]
+    ---
+
+    ## 3. Unified Hypothesis
+    [Your synthesized hypothesis]
+
+    ---
+    Any of the sections above is optional, you can add more or remove any.
+    
+    If there is no agreement between the experts, you should state that in the unified hypothesis.
+    
+    But try to reach a consensus if possible, highlighting the points of agreement.
 
 discussant_review:
   description: >
@@ -230,14 +251,15 @@ discussant_review:
     4. Ignored minority expert viewpoints
     5. Citations flagged as unverified or inaccessible in the evidence scorecard
 
-    Return your verdict as a compact JSON object with:
+    Return your verdict as a JSON object with:
       - "approved": true or false
       - "verdict": "APPROVED" or "REJECTED"
-      - "issues": max 3 specific problems (one sentence each), empty if approved
-      - "conflict_mandate": max 1 sentence instruction, or null if approved
-    Keep every field concise. The issues list is for actionable problems, not commentary.
+      - "issues": list of specific problems found (empty if approved)
+      - "conflict_mandate": a string instruction for the next debate round if rejected,
+        or null if approved
   expected_output: >
-    A compact JSON object. Issues capped at 3. Mandate max 1 sentence.
+    A JSON object with keys: approved (bool), verdict (string),
+    issues (list of strings), conflict_mandate (string or null).
 
 rapporteur_rebuttal:
   description: >
@@ -255,12 +277,18 @@ rapporteur_rebuttal:
     {evidence_scorecard}
     === END SCORECARD ===
 
-    The Discussant has rejected your synthesis. Address EVERY issue raised
-    and return a revised paragraph (150 words max). If a criticism is
-    unfounded, briefly note why — but focus on fixing real problems.
-    Use the library_read tool to verify disputed claims.
+    The Discussant has rejected your synthesis. Your task:
+    1. Address EVERY issue raised in the critique — do not skip any
+    2. Use the library_read tool to verify claims and find supporting or
+       contradicting evidence for each disputed point
+    3. Revise the synthesis to fix all identified problems with evidence
+    4. If you believe a specific criticism is unfounded, explain why with
+       evidence — do not make superficial changes just to appease the reviewer
+    5. Preserve what was strong about the original synthesis
+
+    Return the fully revised synthesis document.
   expected_output: >
-    A revised single-paragraph synthesis (150 words max).
+    A revised synthesis document using the standard synthesis format.
 
 fact_checker_scorecard:
   description: >

@@ -9,7 +9,6 @@ dependencies = [
     "chromadb>=1.1.1",
     "crewai[tools]>=0.100",
     "ddgs>=9.14.2",
-    "duckduckgo-search>=8.1.1",
     "fastapi>=0.115",
     "pydantic>=2.12.5",
     "pypdf>=6.10.2",

@@ -82,7 +82,7 @@ def _search_quote_on_web(quote: str) -> str | None:
     """Search the web for a quote and return the URL where it was found, or None."""
     # Try DuckDuckGo first (no API key needed)
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         with DDGS() as ddgs:
             for r in ddgs.text(quote[:200], max_results=3):

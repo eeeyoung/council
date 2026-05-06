@@ -118,7 +118,7 @@ class WebSearchTool(BaseTool):
 
         except ImportError:
             return (
-                "DuckDuckGo search is not available (duckduckgo_search not installed). "
+                "DuckDuckGo search is not available (ddgs not installed). "
                 "Please set TAVILY_API_KEY in your .env file."
             )
         except Exception as exc:
