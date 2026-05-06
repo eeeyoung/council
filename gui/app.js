@@ -510,6 +510,9 @@ async function _liveGeneratePanel(query, expertCount) {
         persona_prompt: e.persona_prompt || '',
     }));
 
+    // ── Council Table animation ────────────────────────────────────────
+    await _animateCouncilTable(data.experts);
+
     // Build minimal currentSession so expertColorClass/Phase views work in live mode
     currentSession = {
         session_id: data.session_id,
@@ -556,6 +559,81 @@ function _readPanelFromDOM() {
         bias:          document.getElementById(`pbias-${i}`)?.value    || '',
         persona_prompt: document.getElementById(`ppersona-${i}`)?.value || '',
     }));
+}
+
+async function _animateCouncilTable(experts) {
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+    const chairHtml = experts.map((e, i) => {
+        const angle = (i / experts.length) * 360 - 90;
+        const rad = (angle * Math.PI) / 180;
+        const r = 130;
+        const x = Math.cos(rad) * r;
+        const y = Math.sin(rad) * r;
+        return `
+            <div class="council-chair council-chair-${i}" style="
+                position:absolute;
+                left:calc(50% + ${x}px);
+                top:calc(50% + ${y}px);
+                transform:translate(-50%,-50%) scale(0);
+                transition:transform 0.5s cubic-bezier(.34,1.56,.64,1);
+                text-align:center;
+                opacity:0;
+            ">
+                <div class="council-avatar" style="
+                    width:56px;height:56px;border-radius:50%;
+                    background:${colors[i % colors.length]}22;
+                    border:2px solid ${colors[i % colors.length]};
+                    color:${colors[i % colors.length]};
+                    display:flex;align-items:center;justify-content:center;
+                    margin:0 auto 6px;
+                    font-size:22px;font-weight:700;
+                ">${_esc(e.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 2))}</div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-primary);">${_esc(e.name)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${_esc(e.discipline || '')}</div>
+            </div>`;
+    }).join('');
+
+    contentBody.innerHTML = `
+        <div class="panel-editor wizard-panel" style="align-items:center;justify-content:center;">
+            ${_renderStepper()}
+            <div class="council-table" style="
+                position:relative;width:320px;height:320px;margin:40px auto;
+            ">
+                <div class="council-table-center" style="
+                    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+                    width:100px;height:100px;border-radius:50%;
+                    background:var(--bg-secondary);
+                    border:2px dashed var(--border-color);
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:13px;color:var(--text-muted);text-align:center;
+                ">Council<br>Assembling</div>
+                ${chairHtml}
+            </div>
+            <p id="council-status" style="color:var(--text-muted);font-size:14px;text-align:center;">
+                Convening your expert panel…
+            </p>
+        </div>`;
+
+    // Animate chairs appearing one by one
+    for (let i = 0; i < experts.length; i++) {
+        await new Promise(r => setTimeout(r, 600));
+        const chair = document.querySelector(`.council-chair-${i}`);
+        if (chair) {
+            chair.style.transform = 'translate(-50%,-50%) scale(1)';
+            chair.style.opacity = '1';
+        }
+        const status = document.getElementById('council-status');
+        if (status) {
+            status.textContent = `${experts[i].name} has joined the council`;
+        }
+    }
+
+    await new Promise(r => setTimeout(r, 800));
+    const status = document.getElementById('council-status');
+    if (status) {
+        status.textContent = `Council assembled — ${experts.length} experts ready`;
+    }
+    await new Promise(r => setTimeout(r, 1000));
 }
 
 window.onPanelEdit = function () {
