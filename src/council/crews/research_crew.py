@@ -173,8 +173,15 @@ def run_collection(state: CouncilState, console: Console | None = None,
         collect_tasks.append(Task(description=desc, expected_output=cfg["expected_output"],
                                   agent=agent, async_execution=True))
 
-    Crew(agents=collect_agents, tasks=collect_tasks, process=Process.sequential,
-         verbose=verbose).kickoff()
+    # CrewAI requires at most one async task, and it must be the last one.
+    # We add a dummy sync task so the multiple async collection tasks are accepted.
+    dummy_agent = Agent(role="Collector", goal="Wait for collection.",
+                        backstory="You wait for sources to be collected.", llm=llm,
+                        verbose=False, allow_delegation=False)
+    dummy_task = Task(description="Return 'done'. Do nothing else.",
+                      expected_output="done", agent=dummy_agent, async_execution=False)
+    Crew(agents=collect_agents + [dummy_agent], tasks=collect_tasks + [dummy_task],
+         process=Process.sequential, verbose=verbose).kickoff()
     state.source_pool = get_source_pool(state.session_id)
     console.print(f"[dim]  Source pool: {len(state.source_pool)} entries collected[/dim]\n")
     return state
