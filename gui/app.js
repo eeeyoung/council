@@ -81,6 +81,13 @@ function _esc(str) {
 
 // ─── Phase switching ──────────────────────────────────────────────────────────
 async function switchPhase(phaseId) {
+    // Clean up all animation timers when switching phases
+    if (_deliberationTimer) { clearInterval(_deliberationTimer); _deliberationTimer = null; }
+    if (_shelvesTimer)     { clearInterval(_shelvesTimer);     _shelvesTimer = null; }
+    if (_stampTimer)       { clearInterval(_stampTimer);       _stampTimer = null; }
+    if (_bubbleTimer)      { clearInterval(_bubbleTimer);      _bubbleTimer = null; }
+    if (_courtroomTimer)   { clearInterval(_courtroomTimer);   _courtroomTimer = null; }
+
     // In live mode, allow panel phase without a loaded session (new session wizard)
     if (!currentSession && !(window.SERVER_MODE === 'live' && phaseId === 'panel')) {
         await renderSessionPicker();
@@ -189,6 +196,18 @@ async function loadSession(sessionId) {
     }
 }
 
+function _updateNewSessionBtnState() {
+    const btn = document.getElementById('new-session-btn');
+    if (!btn) return;
+    if (_liveSSE) {
+        btn.classList.add('action-btn-disabled');
+        btn.textContent = '⏳ Session Running';
+    } else {
+        btn.classList.remove('action-btn-disabled');
+        btn.textContent = '+ New Session';
+    }
+}
+
 function startNewSession() {
     // Warn if a live session is actively running
     if (_liveSSE) {
@@ -197,6 +216,7 @@ function startNewSession() {
         }
         _liveSSE.close();
         _liveSSE = null;
+        _updateNewSessionBtnState();
     }
 
     currentSession = null;
@@ -204,6 +224,9 @@ function startNewSession() {
     _liveDebateMessages = [];
     _liveCurrentRound = 0;
     _liveDossier = '';
+    _deliberationInProgress = false;
+    _pendingDeliberationCount = 0;
+    if (_deliberationTimer) { clearInterval(_deliberationTimer); _deliberationTimer = null; }
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     _reconnectAttempts = 0;
 
@@ -254,6 +277,12 @@ async function renderPanelPhase() {
         }
         panelWizardState.step = 2;
         panelWizardState.visited.add(2);
+    }
+
+    // If deliberation is in progress (fetch pending), show the animation again
+    if (_deliberationInProgress) {
+        _startCouncilDeliberation(_pendingDeliberationCount);
+        return;
     }
 
     panelWizardState.step === 1 ? _renderStep1() : _renderStep2();
@@ -421,6 +450,8 @@ window.wizardGoTo = function (step) {
 };
 
 window.wizardAdvance = async function () {
+    if (_deliberationInProgress) return;  // Prevent double-click during fetch
+
     const q = document.getElementById('query-input')?.value?.trim() || panelWizardState.query.trim();
     if (q.length < 10) return;
 
@@ -464,6 +495,8 @@ window.wizardAdvance = async function () {
 
 async function _liveGeneratePanel(query, expertCount) {
     // ── Start deliberation animation BEFORE the API call ────────────────
+    _deliberationInProgress = true;
+    _pendingDeliberationCount = expertCount;
     _startCouncilDeliberation(expertCount);
 
     let res;
@@ -479,6 +512,9 @@ async function _liveGeneratePanel(query, expertCount) {
             }),
         });
     } catch (e) {
+        _deliberationInProgress = false;
+        clearInterval(_deliberationTimer);
+        _deliberationTimer = null;
         contentBody.innerHTML = `<div class="markdown-content"><p style="color:#ef4444;padding:40px;">
             Cannot reach the server. Make sure it's running in live mode:
             <pre style="margin-top:12px;">uv run python -m council.server --mode live</pre></p></div>`;
@@ -486,6 +522,9 @@ async function _liveGeneratePanel(query, expertCount) {
     }
 
     if (!res.ok) {
+        _deliberationInProgress = false;
+        clearInterval(_deliberationTimer);
+        _deliberationTimer = null;
         const err = await res.json().catch(() => ({}));
         contentBody.innerHTML = `<div class="markdown-content"><p style="color:#ef4444;padding:40px;">
             ${_esc(err.detail || 'Failed to generate panel. Check the server logs.')}</p></div>`;
@@ -504,6 +543,8 @@ async function _liveGeneratePanel(query, expertCount) {
 
     // Settle the deliberation animation on the real experts
     await _settleCouncilTable(data.experts);
+    _deliberationInProgress = false;
+    _pendingDeliberationCount = 0;
 
     // Build minimal currentSession so expertColorClass/Phase views work in live mode
     currentSession = {
@@ -524,7 +565,11 @@ async function _liveGeneratePanel(query, expertCount) {
     const badge = document.getElementById('session-badge-text');
     if (badge) badge.textContent = `Session: ${data.session_id}`;
 
-    _renderStep2();
+    // Only render step 2 if the user is still on Phase A
+    const activeBtn = document.querySelector('.nav-btn.active');
+    if (activeBtn && activeBtn.dataset.phase === 'panel') {
+        _renderStep2();
+    }
 }
 
 window.wizardRevert = function () {
@@ -667,8 +712,10 @@ async function _settleCouncilTable(experts) {
 
     const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
 
-    // Fade out all current chairs
-    for (let i = 0; i < document.querySelectorAll('.council-slot-\\d+').length || 4; i++) {
+    // Fade out all current chairs (query by class prefix, not regex)
+    const currentSlots = document.querySelectorAll('[class*="council-slot-"]');
+    const slotCount = currentSlots.length || 4;
+    for (let i = 0; i < slotCount; i++) {
         const slot = document.querySelector(`.council-slot-${i}`);
         if (slot) slot.style.opacity = '0';
     }
@@ -858,6 +905,9 @@ async function renderResearchPhase() {
 
 let _shelvesTimer = null;
 let _shelfBooks = [];
+let _courtroomTimer = null;
+let _deliberationInProgress = false;
+let _pendingDeliberationCount = 0;
 
 function _renderLiveResearchPhase() {
     const entries = Object.values(_liveResearch);
@@ -1179,32 +1229,12 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 // ─── Phase D: Evidence Scorecard ─────────────────────────────────────────────
 
 async function renderScorecardPhase() {
-    // Live mode: show scorecard-relevant audit messages
+    // Live mode: show Courtroom Drama animation
     if (_liveSSE) {
         const auditMsgs = _liveDebateMessages.filter(m =>
             m.name === 'Rapporteur' || m.name === 'Discussant'
         );
-        if (!auditMsgs.length) {
-            contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted);text-align:center;">Evidence scorecard will be compiled after the debate round…</p>';
-            return;
-        }
-        contentBody.innerHTML = `
-            <div style="padding:16px;">
-                <h3 style="color:var(--text-muted);margin-bottom:12px;">Live Audit Summary</h3>
-                ${auditMsgs.map(m => `
-                    <div class="chat-message message-right ${m.name === 'Rapporteur' ? 'rapporteur' : 'discussant'}">
-                        <div class="chat-avatar">${m.name === 'Rapporteur' ? '⚖' : '🔬'}</div>
-                        <div class="chat-bubble-wrapper">
-                            <div class="chat-header">
-                                <strong>${_esc(m.name)}</strong>
-                                <span>${_esc(m.discipline || '')}</span>
-                            </div>
-                            <div class="chat-bubble markdown-content">${marked.parse(m.content)}</div>
-                        </div>
-                    </div>
-                `).join('')}
-                <p style="color:var(--text-muted);text-align:center;margin-top:16px;">Scorecard will finalize when the audit completes…</p>
-            </div>`;
+        _renderCourtroom(auditMsgs);
         return;
     }
 
@@ -1296,6 +1326,361 @@ async function renderScorecardPhase() {
         btn.classList.add('active');
         document.getElementById('scorecard-grid').innerHTML = buildGrid(filter);
     };
+}
+
+// ── Courtroom Drama (Phase D) ───────────────────────────────────────────────
+
+function _renderCourtroom(auditMsgs) {
+    const round = _liveCurrentRound || 1;
+
+    _stopCourtroomAnimation();
+
+    contentBody.innerHTML = `
+        <div id="courtroom-stage" style="
+            display:flex;flex-direction:column;gap:0;height:100%;
+        ">
+            <div id="courtroom-header" style="
+                text-align:center;padding:8px 0 4px;
+                font-size:12px;font-weight:600;color:var(--text-muted);
+                letter-spacing:1px;text-transform:uppercase;
+            ">⚖️ Courtroom — Round ${round} — Audit in Session</div>
+            <div class="courtroom-arena" style="
+                display:flex;align-items:center;justify-content:center;
+                gap:24px;padding:16px 24px 12px;
+                position:relative;min-height:160px;
+            ">
+                <!-- Rapporteur (Left) -->
+                <div class="courtroom-figure" id="courtroom-rapporteur" style="
+                    display:flex;flex-direction:column;align-items:center;gap:6px;
+                    flex:1;max-width:180px;transition:all 0.5s;
+                ">
+                    <div class="courtroom-avatar" style="
+                        width:64px;height:64px;border-radius:50%;
+                        background:rgba(167,139,250,0.12);
+                        border:3px solid rgba(167,139,250,0.5);
+                        color:#a78bfa;display:flex;align-items:center;
+                        justify-content:center;font-size:30px;
+                        transition:all 0.5s;position:relative;
+                    ">⚖️</div>
+                    <div style="font-weight:700;color:#a78bfa;font-size:14px;">Rapporteur</div>
+                    <div class="courtroom-status" id="courtroom-status-left" style="
+                        font-size:11px;color:var(--text-muted);text-align:center;
+                        min-height:16px;transition:all 0.4s;
+                    ">Awaiting synthesis…</div>
+                </div>
+
+                <!-- Center: Gavel + Action Zone -->
+                <div class="courtroom-center" id="courtroom-center" style="
+                    display:flex;flex-direction:column;align-items:center;
+                    gap:8px;flex:0 0 auto;position:relative;
+                ">
+                    <div id="courtroom-gavel" style="
+                        font-size:48px;cursor:default;
+                        transition:transform 0.15s;transform-origin:bottom right;
+                        filter:drop-shadow(0 2px 8px rgba(167,139,250,0.3));
+                    ">🔨</div>
+                    <div id="courtroom-objection" style="
+                        position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);
+                        font-weight:900;font-size:18px;letter-spacing:2px;
+                        white-space:nowrap;transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+                        pointer-events:none;
+                    "></div>
+                </div>
+
+                <!-- Discussant (Right) -->
+                <div class="courtroom-figure" id="courtroom-discussant" style="
+                    display:flex;flex-direction:column;align-items:center;gap:6px;
+                    flex:1;max-width:180px;transition:all 0.5s;
+                ">
+                    <div class="courtroom-avatar" style="
+                        width:64px;height:64px;border-radius:50%;
+                        background:rgba(251,146,60,0.12);
+                        border:3px solid rgba(251,146,60,0.5);
+                        color:#fb923c;display:flex;align-items:center;
+                        justify-content:center;font-size:30px;
+                        transition:all 0.5s;position:relative;
+                    ">🔬</div>
+                    <div style="font-weight:700;color:#fb923c;font-size:14px;">Discussant</div>
+                    <div class="courtroom-status" id="courtroom-status-right" style="
+                        font-size:11px;color:var(--text-muted);text-align:center;
+                        min-height:16px;transition:all 0.4s;
+                    ">Waiting for draft…</div>
+                </div>
+            </div>
+            <!-- Chat area for audit messages -->
+            <div id="courtroom-chat" style="
+                flex:1;overflow-y:auto;padding:0 16px 16px;
+                display:flex;flex-direction:column;gap:10px;
+            ">${_renderCourtroomMessages(auditMsgs)}</div>
+        </div>`;
+
+    // Start self-animation
+    _startCourtroomAnimation();
+}
+
+function _renderCourtroomMessages(msgs) {
+    if (!msgs.length) {
+        return `<p style="color:var(--text-muted);text-align:center;padding:20px;
+            font-size:13px;">The Rapporteur will present a synthesis, then the Discussant will cross-examine it…</p>`;
+    }
+    return msgs.map(m => {
+        const isRapp = m.name === 'Rapporteur';
+        const sideCls = isRapp ? 'rapporteur' : 'discussant';
+        const avatar = isRapp ? '⚖️' : '🔬';
+        return `
+            <div class="chat-message message-right ${sideCls}">
+                <div class="chat-avatar">${avatar}</div>
+                <div class="chat-bubble-wrapper">
+                    <div class="chat-header">
+                        <strong>${_esc(m.name)}</strong>
+                        <span>${_esc(m.discipline || '')}</span>
+                    </div>
+                    <div class="chat-bubble markdown-content">${marked.parse(m.content)}</div>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+function _startCourtroomAnimation() {
+    if (_courtroomTimer) return;
+
+    const rapporteurStatuses = [
+        'Reviewing testimony…',
+        'Weighing the evidence…',
+        'Drafting synthesis…',
+        'Cross-referencing claims…',
+        'Formulating consensus…',
+    ];
+    const discussantStatuses = [
+        'Examining the brief…',
+        'Checking citations…',
+        'Probing for weaknesses…',
+        'Evaluating methodology…',
+        'Preparing cross-examination…',
+    ];
+    let tick = 0;
+
+    _courtroomTimer = setInterval(() => {
+        tick++;
+
+        // Cycle status texts
+        const leftStatus = document.getElementById('courtroom-status-left');
+        const rightStatus = document.getElementById('courtroom-status-right');
+        if (leftStatus && Math.random() < 0.4) {
+            leftStatus.textContent = rapporteurStatuses[Math.floor(Math.random() * rapporteurStatuses.length)];
+        }
+        if (rightStatus && Math.random() < 0.4) {
+            rightStatus.textContent = discussantStatuses[Math.floor(Math.random() * discussantStatuses.length)];
+        }
+
+        // Gavel pulse — gentle bob every few ticks
+        const gavel = document.getElementById('courtroom-gavel');
+        if (gavel && tick % 3 === 0) {
+            gavel.style.transform = 'rotate(-20deg) scale(1.15)';
+            setTimeout(() => {
+                if (gavel) gavel.style.transform = 'rotate(0deg) scale(1)';
+            }, 200);
+        }
+
+        // Occasional ambient pulse on avatars
+        if (tick % 5 === 0) {
+            const leftAv = document.querySelector('#courtroom-rapporteur .courtroom-avatar');
+            const rightAv = document.querySelector('#courtroom-discussant .courtroom-avatar');
+            if (leftAv) {
+                leftAv.style.boxShadow = '0 0 24px rgba(167,139,250,0.4)';
+                setTimeout(() => { if (leftAv) leftAv.style.boxShadow = 'none'; }, 600);
+            }
+            if (rightAv) {
+                rightAv.style.boxShadow = '0 0 24px rgba(251,146,60,0.4)';
+                setTimeout(() => { if (rightAv) rightAv.style.boxShadow = 'none'; }, 600);
+            }
+        }
+    }, 1200);
+}
+
+function _stopCourtroomAnimation() {
+    if (_courtroomTimer) {
+        clearInterval(_courtroomTimer);
+        _courtroomTimer = null;
+    }
+}
+
+function _updateCourtroomFigure(name) {
+    const isRapp = name === 'Rapporteur';
+    const leftFig = document.getElementById('courtroom-rapporteur');
+    const rightFig = document.getElementById('courtroom-discussant');
+    const leftStatus = document.getElementById('courtroom-status-left');
+    const rightStatus = document.getElementById('courtroom-status-right');
+
+    if (!leftFig || !rightFig) return;
+
+    if (isRapp) {
+        leftFig.style.transform = 'scale(1.08)';
+        leftFig.style.opacity = '1';
+        rightFig.style.transform = 'scale(0.95)';
+        rightFig.style.opacity = '0.5';
+        if (leftStatus) leftStatus.textContent = 'Drafting synthesis…';
+        if (rightStatus) rightStatus.textContent = 'Waiting…';
+        // Glow on rapporteur avatar
+        const av = leftFig.querySelector('.courtroom-avatar');
+        if (av) av.style.boxShadow = '0 0 32px rgba(167,139,250,0.6)';
+    } else {
+        rightFig.style.transform = 'scale(1.08)';
+        rightFig.style.opacity = '1';
+        leftFig.style.transform = 'scale(0.95)';
+        leftFig.style.opacity = '0.5';
+        if (rightStatus) rightStatus.textContent = 'Cross-examining…';
+        if (leftStatus) leftStatus.textContent = 'Under review…';
+        // Glow on discussant avatar
+        const av = rightFig.querySelector('.courtroom-avatar');
+        if (av) av.style.boxShadow = '0 0 32px rgba(251,146,60,0.6)';
+    }
+
+    // Reset other avatar glow
+    const otherAv = (isRapp ? rightFig : leftFig).querySelector('.courtroom-avatar');
+    if (otherAv) otherAv.style.boxShadow = 'none';
+}
+
+function _courtroomAddMessage(data) {
+    const chat = document.getElementById('courtroom-chat');
+    if (!chat) return;
+
+    // Remove placeholder if present
+    const placeholder = chat.querySelector('p');
+    if (placeholder && placeholder.textContent.includes('Rapporteur will present')) {
+        placeholder.remove();
+    }
+
+    const isRapp = data.name === 'Rapporteur';
+    const sideCls = isRapp ? 'rapporteur' : 'discussant';
+    const avatar = isRapp ? '⚖️' : '🔬';
+    const div = document.createElement('div');
+    div.className = `chat-message message-right ${sideCls}`;
+    div.innerHTML = `
+        <div class="chat-avatar">${avatar}</div>
+        <div class="chat-bubble-wrapper">
+            <div class="chat-header">
+                <strong>${_esc(data.name)}</strong>
+                <span>${_esc(data.discipline || '')}</span>
+            </div>
+            <div class="chat-bubble markdown-content">${marked.parse(data.content)}</div>
+        </div>`;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+
+    // Clear figure highlights
+    const leftFig = document.getElementById('courtroom-rapporteur');
+    const rightFig = document.getElementById('courtroom-discussant');
+    if (leftFig) { leftFig.style.transform = 'scale(1)'; leftFig.style.opacity = '1'; }
+    if (rightFig) { rightFig.style.transform = 'scale(1)'; rightFig.style.opacity = '1'; }
+}
+
+function _courtroomShowVerdict(approved, verdictText, issues) {
+    _stopCourtroomAnimation();
+
+    const gavel = document.getElementById('courtroom-gavel');
+    const header = document.getElementById('courtroom-header');
+    const leftAv = document.querySelector('#courtroom-rapporteur .courtroom-avatar');
+    const rightAv = document.querySelector('#courtroom-discussant .courtroom-avatar');
+
+    // Gavel strike animation
+    if (gavel) {
+        gavel.style.transform = 'rotate(-35deg) scale(1.3)';
+        gavel.style.transition = 'transform 0.1s';
+        setTimeout(() => {
+            if (gavel) {
+                gavel.style.transform = 'rotate(0deg) scale(1)';
+                gavel.style.transition = 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+            }
+        }, 150);
+    }
+
+    // Flash the avatars
+    const verdictColor = approved ? '#22c55e' : '#ef4444';
+    [leftAv, rightAv].forEach(av => {
+        if (!av) return;
+        av.style.transition = 'all 0.3s';
+        av.style.borderColor = verdictColor;
+        av.style.boxShadow = `0 0 40px ${verdictColor}44`;
+    });
+
+    // Update header with verdict
+    if (header) {
+        header.innerHTML = approved
+            ? '⚖️ <span style="color:#22c55e;">VERDICT: APPROVED</span> — Consensus Reached'
+            : '⚖️ <span style="color:#ef4444;">VERDICT: REJECTED</span> — Another Round Required';
+    }
+
+    // Show objection burst if rejected
+    if (!approved) {
+        const objection = document.getElementById('courtroom-objection');
+        if (objection) {
+            objection.textContent = issues.length ? `ISSUES FOUND (${issues.length})` : 'OBJECTION!';
+            objection.style.color = '#ef4444';
+            objection.style.transform = 'translate(-50%,-50%) scale(1)';
+            setTimeout(() => {
+                if (objection) objection.style.transform = 'translate(-50%,-50%) scale(0)';
+            }, 2500);
+        }
+    }
+
+    // Add verdict banner to chat
+    const chat = document.getElementById('courtroom-chat');
+    if (chat) {
+        const banner = document.createElement('div');
+        banner.style.cssText = `
+            text-align:center;padding:12px 20px;margin:8px 0;
+            border-radius:8px;font-weight:700;font-size:14px;
+            background:${approved ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)'};
+            border:1px solid ${approved ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'};
+            color:${approved ? '#22c55e' : '#ef4444'};
+        `;
+        banner.textContent = verdictText;
+        if (issues.length) {
+            const issuesDiv = document.createElement('div');
+            issuesDiv.style.cssText = 'font-weight:400;font-size:12px;margin-top:4px;color:var(--text-muted);';
+            issuesDiv.textContent = 'Issues: ' + issues.join('; ');
+            banner.appendChild(issuesDiv);
+        }
+        chat.appendChild(banner);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    // Reset after a moment
+    setTimeout(() => {
+        if (leftAv) { leftAv.style.borderColor = 'rgba(167,139,250,0.5)'; leftAv.style.boxShadow = 'none'; }
+        if (rightAv) { rightAv.style.borderColor = 'rgba(251,146,60,0.5)'; rightAv.style.boxShadow = 'none'; }
+    }, 3000);
+}
+
+function _courtroomShowExpectation(met, msg) {
+    const chat = document.getElementById('courtroom-chat');
+    const gavel = document.getElementById('courtroom-gavel');
+    if (!chat) return;
+
+    // Light gavel tap
+    if (gavel) {
+        gavel.style.transform = 'rotate(-12deg) scale(1.1)';
+        gavel.style.transition = 'transform 0.1s';
+        setTimeout(() => {
+            if (gavel) {
+                gavel.style.transform = 'rotate(0deg) scale(1)';
+                gavel.style.transition = 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+            }
+        }, 120);
+    }
+
+    const color = met ? '#22c55e' : '#f59e0b';
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+        text-align:center;padding:10px 20px;margin:4px 0;
+        border-radius:8px;font-weight:600;font-size:13px;
+        background:${color}11;border:1px solid ${color}44;
+        color:${color};
+    `;
+    banner.textContent = msg;
+    chat.appendChild(banner);
+    chat.scrollTop = chat.scrollHeight;
 }
 
 // ─── Phase E: Final Dossier ───────────────────────────────────────────────────
@@ -1408,10 +1793,12 @@ function _connectLiveSSE(sessionId) {
     if (_shelvesTimer) { clearInterval(_shelvesTimer); _shelvesTimer = null; }
     if (_stampTimer) { clearInterval(_stampTimer); _stampTimer = null; }
     if (_bubbleTimer) { clearInterval(_bubbleTimer); _bubbleTimer = null; }
+    if (_courtroomTimer) { clearInterval(_courtroomTimer); _courtroomTimer = null; }
     _reconnectAttempts = 0;
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     if (_liveSSE) { _liveSSE.close(); _liveSSE = null; }
     _liveSSE = new EventSource(`${API_BASE}/api/sessions/${sessionId}/live`);
+    _updateNewSessionBtnState();
 
     _liveSSE.addEventListener('session_start', (e) => {
         const data = JSON.parse(e.data);
@@ -1423,6 +1810,9 @@ function _connectLiveSSE(sessionId) {
         if (data.phase === 'C') {
             switchPhase('debate');
             showToast('Symposium begins — experts are debating', 'info');
+        } else if (data.phase === 'D') {
+            switchPhase('scorecard');
+            showToast('Courtroom is in session — audit begins', 'info');
         } else if (data.phase === 'E') {
             switchPhase('dossier');
             showToast('Compiling final dossier', 'info');
@@ -1484,6 +1874,11 @@ function _connectLiveSSE(sessionId) {
         const data = JSON.parse(e.data);
         _renderDebateTyping(data);
         _updatePodium(data.name);
+        // Update courtroom if user is viewing Phase D
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'scorecard') {
+            _updateCourtroomFigure(data.name);
+        }
     });
 
     _liveSSE.addEventListener('debate_message', (e) => {
@@ -1492,6 +1887,11 @@ function _connectLiveSSE(sessionId) {
         _liveDebateMessages.push(data);
         _renderDebateMessage(data);
         _updatePodium(null); // clear spotlight
+        // Add message to courtroom if user is viewing Phase D
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'scorecard') {
+            _courtroomAddMessage(data);
+        }
     });
 
     _liveSSE.addEventListener('scorecard_ready', (e) => {
@@ -1511,6 +1911,11 @@ function _connectLiveSSE(sessionId) {
             : '✗ REJECTED — another round needed';
         _renderAuditVerdict(verdict, data.approved);
         showToast(verdict, data.approved ? 'success' : 'error');
+        // Animate gavel verdict in courtroom
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'scorecard') {
+            _courtroomShowVerdict(data.approved, verdict, data.issues || []);
+        }
     });
 
     _liveSSE.addEventListener('expectation_result', (e) => {
@@ -1520,6 +1925,11 @@ function _connectLiveSSE(sessionId) {
             : '✗ Expectation NOT MET — another round needed';
         _renderAuditVerdict(msg, data.met);
         showToast(msg, data.met ? 'success' : 'warning');
+        // Show expectation verdict in courtroom
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn && activeBtn.dataset.phase === 'scorecard') {
+            _courtroomShowExpectation(data.met, msg);
+        }
     });
 
     _liveSSE.addEventListener('dossier_chunk', (e) => {
@@ -1536,6 +1946,7 @@ function _connectLiveSSE(sessionId) {
         const data = JSON.parse(e.data);
         _liveSSE.close();
         _liveSSE = null;
+        _updateNewSessionBtnState();
         showToast('Session complete! Loading results…', 'success');
         // Load the completed session so all phases are browsable from files
         setTimeout(() => loadSession(data.session_id), 1500);
@@ -1545,6 +1956,7 @@ function _connectLiveSSE(sessionId) {
         if (_liveSSE && _liveSSE.readyState === EventSource.CLOSED) {
             _liveSSE.close();
             _liveSSE = null;
+            _updateNewSessionBtnState();
             if (_reconnectAttempts < 3) {
                 _reconnectAttempts++;
                 const delay = Math.pow(2, _reconnectAttempts) * 1000; // 2s, 4s, 8s
@@ -2006,4 +2418,5 @@ async function detectServerMode() {
         badge.textContent = window.SERVER_MODE === 'live' ? '⚡ Live' : '📋 Review';
         badge.className = 'mode-badge mode-' + window.SERVER_MODE;
     }
+    _updateNewSessionBtnState();
 }

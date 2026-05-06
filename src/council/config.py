@@ -103,10 +103,12 @@ def build_llm(temperature: float = 0.7) -> object:
             model=model,
             api_key=get_deepseek_key(),
             temperature=temperature,
+            timeout=120,
         )
     else:
         return LLM(
             model=os.getenv("MODEL", "gemini/gemini-2.5-flash-lite"),
             api_key=get_gemini_key(),
             temperature=temperature,
+            timeout=120,
         )

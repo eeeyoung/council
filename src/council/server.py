@@ -258,33 +258,7 @@ def generate_panel(req: GeneratePanelRequest) -> dict:
     state.experts = experts
     state.status = "researching"
 
-    # Run Expectation Curator if expectation type provided
     criteria = ""
-    if state.expectation_type:
-        try:
-            from crewai import Crew, Process, Task
-            import yaml
-            from council.agents.expectation_curator import build_expectation_curator
-
-            _CONFIG_DIR = ROOT / "config"
-            with open(_CONFIG_DIR / "tasks.yaml") as f:
-                tasks_cfg = yaml.safe_load(f)
-
-            agent = build_expectation_curator()
-            cfg = tasks_cfg["expectation_curator_refine"]
-            desc = cfg["description"].format(
-                query=state.query,
-                expectation_type=state.expectation_type.replace("_", " ").title(),
-                expectation_detail=state.expectation_detail or "(none)",
-            )
-            task = Task(description=desc, expected_output=cfg["expected_output"], agent=agent)
-            crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
-            result = crew.kickoff()
-            criteria = result.raw if hasattr(result, "raw") else str(result)
-            state.expectation_criteria = criteria
-        except Exception:
-            pass  # Continue without criteria if curator fails
-
     save_state(state)
 
     # Write panel JSON
@@ -328,6 +302,32 @@ def proceed_session(session_id: str, req: ProceedRequest) -> dict:
     state.experts = [ExpertDefinition(**e) for e in req.experts]
     state.expectation_type = req.expectation_type or state.expectation_type
     state.expectation_detail = req.expectation_detail or state.expectation_detail
+
+    # Run Expectation Curator if expectation type provided
+    if state.expectation_type and not state.expectation_criteria:
+        try:
+            from crewai import Crew, Process, Task
+            import yaml
+            from council.agents.expectation_curator import build_expectation_curator
+
+            _CONFIG_DIR = ROOT / "config"
+            with open(_CONFIG_DIR / "tasks.yaml") as f:
+                tasks_cfg = yaml.safe_load(f)
+
+            agent = build_expectation_curator()
+            cfg = tasks_cfg["expectation_curator_refine"]
+            desc = cfg["description"].format(
+                query=state.query,
+                expectation_type=state.expectation_type.replace("_", " ").title(),
+                expectation_detail=state.expectation_detail or "(none)",
+            )
+            task = Task(description=desc, expected_output=cfg["expected_output"], agent=agent)
+            crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+            result = crew.kickoff()
+            state.expectation_criteria = result.raw if hasattr(result, "raw") else str(result)
+        except Exception:
+            pass  # Continue without criteria if curator fails
+
     save_state(state)
 
     return {"session_id": session_id, "status": "ready"}

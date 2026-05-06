@@ -162,7 +162,10 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             yield "scorecard_ready", {"round": r}
 
         if state.status == "auditing":
-            # Signal the GUI that the audit loop is working (it's a blocking call)
+            # Signal the GUI that Phase D (Courtroom) has begun
+            yield "phase_start", {"phase": "D"}
+            await asyncio.sleep(0.2)
+
             yield "debate_typing", {
                 "name": "Rapporteur",
                 "discipline": "Audit Loop",
