@@ -58,6 +58,38 @@ def _extract_text(output: object) -> str:
     return output.raw if hasattr(output, "raw") else str(output)
 
 
+def _format_discussant_speech(raw: str) -> str:
+    """Format the Discussant's JSON output as readable markdown for the GUI."""
+    cleaned = re.sub(r"```(?:json)?", "", raw).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1:
+        return raw  # Can't parse — return as-is
+
+    try:
+        data = json.loads(cleaned[start : end + 1])
+    except Exception:
+        return raw
+
+    approved = data.get("approved", False)
+    verdict = data.get("verdict", "APPROVED" if approved else "REJECTED")
+    issues = data.get("issues", [])
+    mandate = data.get("conflict_mandate", "")
+
+    lines = [f"**Verdict: {verdict}**", ""]
+    if issues:
+        lines.append("**Issues Found:**")
+        for issue in issues:
+            lines.append(f"- {issue}")
+        lines.append("")
+    else:
+        lines.append("*No issues found — the synthesis meets scientific standards.*")
+        lines.append("")
+    if mandate and not approved:
+        lines.append(f"**Mandate for Next Round:** {mandate}")
+    return "\n".join(lines)
+
+
 def _parse_expectation_output(raw_output: str) -> tuple[bool, str]:
     """Parse the Expectation Evaluator's JSON output to get (met, gaps_text)."""
     cleaned = re.sub(r"```(?:json)?", "", raw_output).strip()
@@ -209,7 +241,7 @@ def run_audit_loop(
     state.add_transcript_entry(
         agent_name="Discussant",
         discipline="Discussant",
-        speech=critique,
+        speech=_format_discussant_speech(critique),
         phase="audit",
     )
 
@@ -297,7 +329,7 @@ def run_audit_loop(
     state.add_transcript_entry(
         agent_name="Discussant",
         discipline="Discussant (final)",
-        speech=final_critique,
+        speech=_format_discussant_speech(final_critique),
         phase="audit",
     )
 

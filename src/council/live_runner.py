@@ -148,6 +148,14 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             yield "scorecard_ready", {"round": r}
 
         if state.status == "auditing":
+            # Signal the GUI that the audit loop is working (it's a blocking call)
+            yield "debate_typing", {
+                "name": "Rapporteur",
+                "discipline": "Audit Loop",
+                "round": state.audit_round + 1,
+            }
+            await asyncio.sleep(0.3)
+
             prev_len = len(state.transcript)
             state = await asyncio.to_thread(run_audit_loop, state, None, False)
             save_state(state)

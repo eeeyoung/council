@@ -1389,9 +1389,13 @@ function _renderDebateTyping(data) {
     div.id = 'typing-indicator';
     div.className = 'chat-indicator';
     const isAudit = data.name === 'Rapporteur' || data.name === 'Discussant';
-    div.innerHTML = isAudit
-        ? `<strong>${_esc(data.name)}</strong> is drafting<span class="dots"><span>.</span><span>.</span><span>.</span></span>`
-        : `<strong>${_esc(data.name)}</strong> is formulating<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    if (isAudit && data.discipline === 'Audit Loop') {
+        div.innerHTML = `<strong>Audit Loop</strong> is evaluating the synthesis<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    } else if (isAudit) {
+        div.innerHTML = `<strong>${_esc(data.name)}</strong> is drafting<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    } else {
+        div.innerHTML = `<strong>${_esc(data.name)}</strong> is formulating<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    }
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 }
