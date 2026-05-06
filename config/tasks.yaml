@@ -21,9 +21,15 @@ moderator_curation:
     a genuinely distinct disciplinary perspective. Avoid redundancy. Do not
     generate fewer than {max_experts} experts.
 
+    For names: use philosopher-inspired aliases — slightly misspell or blend
+    famous thinkers' names for a distinctive, memorable feel. Examples:
+    "Socratyes" (Socrates), "Platoueau" (Plato), "Kantwell" (Kant),
+    "Arendelle" (Arendt), "Foucavie" (Foucault), "Hypatienne" (Hypatia).
+    Each name should hint at their intellectual lineage without being the exact name.
+
     Respond with ONLY a valid JSON array with no surrounding text or markdown.
     Each object must have these exact fields:
-      - name: A plausible academic name (e.g. "Dr. Lena Hartmann")
+      - name: A philosopher-inspired alias (e.g. "Socratyes", "Kantwell")
       - discipline: Their primary field (e.g. "Theoretical Astrophysics")
       - bias: Their known intellectual leaning or methodological preference
       - persona_prompt: 2-3 sentences describing their personality and approach
