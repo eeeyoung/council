@@ -463,16 +463,8 @@ window.wizardAdvance = async function () {
 };
 
 async function _liveGeneratePanel(query, expertCount) {
-    contentBody.innerHTML = `
-        <div class="panel-editor wizard-panel" style="align-items:center;justify-content:center;gap:16px;">
-            ${_renderStepper()}
-            <div style="text-align:center;padding:60px 0;">
-                <div class="loading-spinner"></div>
-                <p style="margin-top:20px;color:var(--text-muted);font-size:14px;">
-                    Moderator is assembling your expert panel<span class="dots"><span>.</span><span>.</span><span>.</span></span>
-                </p>
-            </div>
-        </div>`;
+    // ── Start deliberation animation BEFORE the API call ────────────────
+    _startCouncilDeliberation(expertCount);
 
     let res;
     try {
@@ -510,8 +502,8 @@ async function _liveGeneratePanel(query, expertCount) {
         persona_prompt: e.persona_prompt || '',
     }));
 
-    // ── Council Table animation ────────────────────────────────────────
-    await _animateCouncilTable(data.experts);
+    // Settle the deliberation animation on the real experts
+    await _settleCouncilTable(data.experts);
 
     // Build minimal currentSession so expertColorClass/Phase views work in live mode
     currentSession = {
@@ -561,78 +553,153 @@ function _readPanelFromDOM() {
     }));
 }
 
-async function _animateCouncilTable(experts) {
+// ── Council Table Deliberation Animation ──────────────────────────────────────
+
+const _PHILOSOPHER_POOL = [
+    ['Socratyes', 'Platoueau', 'Aristarchus', 'Parmenidion', 'Heraclitron',
+     'Thalestine', 'Pythagorine', 'Empedocrate', 'Anaxagorine', 'Democriton',
+     'Epicurian', 'Zenoflux', 'Diogenite', 'Plotinian', 'Hypatienne',
+     'Kantwell', 'Hegelight', 'Nietzschen', 'Foucavie', 'Arendelle'],
+    ['Quantum Physics', 'Neuroscience', 'Materials Science', 'Computational Biology',
+     'Climate Systems', 'Evolutionary Theory', 'Cognitive Psychology', 'Plasma Dynamics',
+     'Information Geometry', 'Molecular Engineering', 'Astrobiology', 'Geochemistry',
+     'Network Theory', 'Linguistic Anthropology', 'Synthetic Biology', 'Game Theory',
+     'Fluid Mechanics', 'Condensed Matter', 'Quantum Information', 'Biomechanics'],
+];
+
+let _deliberationTimer = null;
+
+function _startCouncilDeliberation(count) {
     const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
-    const chairHtml = experts.map((e, i) => {
-        const angle = (i / experts.length) * 360 - 90;
+
+    // Build chair slots around the table
+    let chairSlots = '';
+    for (let i = 0; i < count; i++) {
+        const angle = (i / count) * 360 - 90;
         const rad = (angle * Math.PI) / 180;
         const r = 130;
         const x = Math.cos(rad) * r;
         const y = Math.sin(rad) * r;
-        return `
-            <div class="council-chair council-chair-${i}" style="
+        chairSlots += `
+            <div class="council-chair council-slot-${i}" style="
                 position:absolute;
                 left:calc(50% + ${x}px);
                 top:calc(50% + ${y}px);
-                transform:translate(-50%,-50%) scale(0);
-                transition:transform 0.5s cubic-bezier(.34,1.56,.64,1);
-                text-align:center;
-                opacity:0;
+                transform:translate(-50%,-50%);
+                text-align:center;width:120px;
             ">
                 <div class="council-avatar" style="
-                    width:56px;height:56px;border-radius:50%;
-                    background:${colors[i % colors.length]}22;
-                    border:2px solid ${colors[i % colors.length]};
-                    color:${colors[i % colors.length]};
+                    width:56px;height:56px;border-radius:50%;margin:0 auto 6px;
                     display:flex;align-items:center;justify-content:center;
-                    margin:0 auto 6px;
-                    font-size:22px;font-weight:700;
-                ">${_esc(e.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 2))}</div>
-                <div style="font-size:12px;font-weight:600;color:var(--text-primary);">${_esc(e.name)}</div>
-                <div style="font-size:11px;color:var(--text-muted);">${_esc(e.discipline || '')}</div>
+                    font-size:22px;font-weight:700;transition:all 0.4s;
+                "></div>
+                <div class="council-name" style="font-size:12px;font-weight:600;
+                    color:var(--text-primary);transition:all 0.4s;"></div>
+                <div class="council-disc" style="font-size:11px;
+                    color:var(--text-muted);transition:all 0.4s;"></div>
             </div>`;
-    }).join('');
+    }
 
     contentBody.innerHTML = `
         <div class="panel-editor wizard-panel" style="align-items:center;justify-content:center;">
             ${_renderStepper()}
-            <div class="council-table" style="
-                position:relative;width:320px;height:320px;margin:40px auto;
-            ">
+            <div class="council-table" style="position:relative;width:340px;height:340px;margin:30px auto;">
                 <div class="council-table-center" style="
                     position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-                    width:100px;height:100px;border-radius:50%;
+                    width:90px;height:90px;border-radius:50%;
                     background:var(--bg-secondary);
                     border:2px dashed var(--border-color);
                     display:flex;align-items:center;justify-content:center;
                     font-size:13px;color:var(--text-muted);text-align:center;
-                ">Council<br>Assembling</div>
-                ${chairHtml}
+                ">Deliberating</div>
+                ${chairSlots}
             </div>
-            <p id="council-status" style="color:var(--text-muted);font-size:14px;text-align:center;">
-                Convening your expert panel…
-            </p>
+            <p id="council-status" style="color:var(--text-muted);font-size:14px;text-align:center;
+                min-height:20px;"></p>
         </div>`;
 
-    // Animate chairs appearing one by one
-    for (let i = 0; i < experts.length; i++) {
-        await new Promise(r => setTimeout(r, 600));
-        const chair = document.querySelector(`.council-chair-${i}`);
-        if (chair) {
-            chair.style.transform = 'translate(-50%,-50%) scale(1)';
-            chair.style.opacity = '1';
+    // Cycle random names/disciplines through the chairs
+    const names = _PHILOSOPHER_POOL[0];
+    const discs = _PHILOSOPHER_POOL[1];
+    const statuses = [
+        'Reviewing candidate disciplines…',
+        'Consulting the literature…',
+        'Evaluating methodological fit…',
+        'Assembling optimal panel composition…',
+        'Balancing epistemic perspectives…',
+        'Screening for intellectual tension…',
+    ];
+
+    function shuffle() {
+        for (let i = 0; i < count; i++) {
+            const slot = document.querySelector(`.council-slot-${i}`);
+            if (!slot) continue;
+            const avatar = slot.querySelector('.council-avatar');
+            const name = slot.querySelector('.council-name');
+            const disc = slot.querySelector('.council-disc');
+            if (!avatar || !name || !disc) continue;
+
+            const ci = Math.floor(Math.random() * colors.length);
+            const ni = Math.floor(Math.random() * names.length);
+            const di = Math.floor(Math.random() * discs.length);
+
+            avatar.style.background = colors[ci] + '22';
+            avatar.style.borderColor = colors[ci];
+            avatar.style.color = colors[ci];
+            avatar.textContent = names[ni].substring(0, 2);
+            name.textContent = names[ni];
+            disc.textContent = discs[di];
         }
         const status = document.getElementById('council-status');
         if (status) {
-            status.textContent = `${experts[i].name} has joined the council`;
+            status.textContent = statuses[Math.floor(Math.random() * statuses.length)];
         }
     }
 
-    await new Promise(r => setTimeout(r, 800));
-    const status = document.getElementById('council-status');
-    if (status) {
-        status.textContent = `Council assembled — ${experts.length} experts ready`;
+    shuffle();
+    _deliberationTimer = setInterval(shuffle, 800);
+}
+
+async function _settleCouncilTable(experts) {
+    // Stop the random cycling
+    clearInterval(_deliberationTimer);
+    _deliberationTimer = null;
+
+    const colors = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#fb923c'];
+
+    // Fade out all current chairs
+    for (let i = 0; i < document.querySelectorAll('.council-slot-\\d+').length || 4; i++) {
+        const slot = document.querySelector(`.council-slot-${i}`);
+        if (slot) slot.style.opacity = '0';
     }
+    await new Promise(r => setTimeout(r, 300));
+
+    // Update chairs with real experts
+    for (let i = 0; i < experts.length; i++) {
+        const e = experts[i];
+        const slot = document.querySelector(`.council-slot-${i}`);
+        if (!slot) continue;
+        const avatar = slot.querySelector('.council-avatar');
+        const name = slot.querySelector('.council-name');
+        const disc = slot.querySelector('.council-disc');
+        if (!avatar || !name || !disc) continue;
+
+        avatar.style.background = colors[i % colors.length] + '22';
+        avatar.style.borderColor = colors[i % colors.length];
+        avatar.style.color = colors[i % colors.length];
+        avatar.textContent = (e.name || '').replace(/^(Dr\.|Prof\.) /, '').substring(0, 2);
+        name.textContent = e.name;
+        disc.textContent = e.discipline || '';
+        slot.style.opacity = '1';
+
+        const status = document.getElementById('council-status');
+        if (status) status.textContent = `${e.name} has joined the council`;
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    await new Promise(r => setTimeout(r, 600));
+    const status = document.getElementById('council-status');
+    if (status) status.textContent = `Council assembled — ${experts.length} experts ready`;
     await new Promise(r => setTimeout(r, 1000));
 }
 
