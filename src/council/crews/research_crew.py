@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
-from crewai import Crew, Process, Task
+from crewai import Agent, Crew, Process, Task
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
