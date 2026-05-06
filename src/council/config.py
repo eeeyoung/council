@@ -10,6 +10,10 @@ so it works regardless of the working directory at invocation time.
 from __future__ import annotations
 
 import builtins
+import warnings
+
+# Suppress noisy deprecation warnings from CrewAI internals
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="crewai")
 import io
 import locale
 import os
