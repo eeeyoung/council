@@ -282,7 +282,7 @@ def add_source(ws_id: str, expert_id: str, req: AddSourceRequest):
 
     src = add_source_to_expert(
         expert=expert,
-        workspace_id=ws_id,
+        session_id=ws_id,
         url=req.url,
         title=req.title,
         snippet=req.snippet,
@@ -340,7 +340,7 @@ async def expert_message(ws_id: str, expert_id: str, req: MessageRequest):
         response = await asyncio.to_thread(
             expert_respond,
             expert=expert,
-            workspace_id=ws_id,
+            session_id=ws_id,
             query=ws.query or "the research context",
             message=req.message,
         )
@@ -407,7 +407,7 @@ async def expert_form_opinion(ws_id: str, expert_id: str, req: MessageRequest):
         opinion = await asyncio.to_thread(
             form_opinion,
             expert=expert,
-            workspace_id=ws_id,
+            session_id=ws_id,
             query=req.message or ws.query,
         )
         save(ws)
@@ -485,7 +485,7 @@ async def symposium_round(ws_id: str, sym_id: str):
             speech = await asyncio.to_thread(
                 expert_respond,
                 expert=expert,
-                workspace_id=ws_id,
+                session_id=ws_id,
                 query=query,
                 message=prompt,
             )
