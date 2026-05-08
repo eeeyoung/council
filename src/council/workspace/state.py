@@ -1,10 +1,10 @@
 """
 council/workspace/state.py
 
-WorkspaceState — the single source of truth for the workspace system.
+Session — the top-level entity. A session is a panel of experts assembled
+for a research domain, with symposia and a unified message log.
 
-Flat, no nested state machines. Panels own experts. Experts own knowledge pools.
-Symposia reference participants across panels. Messages are the unified log.
+No nesting — sessions are the highest level. Each has experts, symposia, messages.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class Opinion(BaseModel):
     """An expert's evidence-grounded opinion. Must cite pool sources."""
     id: str = Field(default_factory=_new_id)
     text: str
-    source_ids: list[str] = Field(default_factory=list)  # references PoolSource.id
+    source_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -65,84 +65,67 @@ class Expert(BaseModel):
     discipline: str
     bias: str = ""
     persona_prompt: str = ""
-    photo_url: str = ""            # user-customizable avatar
+    photo_url: str = ""
     knowledge_pool: KnowledgePool = Field(default_factory=KnowledgePool)
-
-
-# ── Panel ────────────────────────────────────────────────────────────────────
-
-class Panel(BaseModel):
-    """A named panel of experts assembled for a research domain."""
-    id: str = Field(default_factory=_new_id)
-    name: str = ""                  # user-editable label, e.g. "Climate Economics"
-    query: str = ""                 # the research question (if question-oriented)
-    function_type: str = ""         # e.g. "feasibility_assessment", "due_diligence"
-    function_detail: str = ""       # user's description of what they need
-    experts: list[Expert] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=_now)
 
 
 # ── Message ──────────────────────────────────────────────────────────────────
 
 class Message(BaseModel):
-    """One entry in the workspace conversation log."""
+    """One entry in the conversation log."""
     id: str = Field(default_factory=_new_id)
     role: str                      # "user" | "agent" | "system"
-    agent_id: str = ""             # which expert spoke (empty for user/system)
-    agent_name: str = ""           # denormalized for display
-    symposium_id: str = ""         # which symposium this belongs to, if any
-    content: str                   # markdown
+    agent_id: str = ""
+    agent_name: str = ""
+    symposium_id: str = ""
+    content: str
     mentioned_agent_ids: list[str] = Field(default_factory=list)
-    turn: Optional[int] = None     # only set for structured debate turns
+    turn: Optional[int] = None
     timestamp: datetime = Field(default_factory=_now)
 
 
 # ── Symposium ─────────────────────────────────────────────────────────────────
 
 class Symposium(BaseModel):
-    """A convened debate between experts from one or more panels."""
+    """A convened debate between experts."""
     id: str = Field(default_factory=_new_id)
     title: str = ""
     format: str = "structured"     # "structured" | "free" | "one_on_one"
-    participant_ids: list[str] = Field(default_factory=list)  # Expert.id refs
-    message_ids: list[str] = Field(default_factory=list)      # Message.id refs
-    scorecard: list[dict] = Field(default_factory=list)       # evidence entries
-    synthesis: str = ""            # Rapporteur output, if requested
+    participant_ids: list[str] = Field(default_factory=list)
+    message_ids: list[str] = Field(default_factory=list)
+    scorecard: list[dict] = Field(default_factory=list)
+    synthesis: str = ""
     created_at: datetime = Field(default_factory=_now)
 
 
-# ── WorkspaceState ───────────────────────────────────────────────────────────
+# ── Session (top-level entity) ───────────────────────────────────────────────
 
-class WorkspaceState(BaseModel):
-    """The complete state of a COUNCIL workspace."""
+class Session(BaseModel):
+    """A COUNCIL session — one panel of experts, their symposia, and messages."""
 
     id: str = Field(default_factory=_new_id)
-    query: str = ""                # overall research context (optional)
+    name: str = ""
+    query: str = ""
+    function_type: str = ""
+    function_detail: str = ""
     created_at: datetime = Field(default_factory=_now)
 
-    panels: list[Panel] = Field(default_factory=list)
+    experts: list[Expert] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
     symposia: list[Symposium] = Field(default_factory=list)
 
     # ── Convenience ──────────────────────────────────────────────────────────
 
     def get_expert(self, expert_id: str) -> Optional[Expert]:
-        for panel in self.panels:
-            for expert in panel.experts:
-                if expert.id == expert_id:
-                    return expert
-        return None
-
-    def get_panel(self, panel_id: str) -> Optional[Panel]:
-        for panel in self.panels:
-            if panel.id == panel_id:
-                return panel
+        for e in self.experts:
+            if e.id == expert_id:
+                return e
         return None
 
     def get_symposium(self, symposium_id: str) -> Optional[Symposium]:
-        for sym in self.symposia:
-            if sym.id == symposium_id:
-                return sym
+        for s in self.symposia:
+            if s.id == symposium_id:
+                return s
         return None
 
     def get_messages_for_symposium(self, symposium_id: str) -> list[Message]:

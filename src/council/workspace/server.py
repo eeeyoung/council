@@ -36,11 +36,11 @@ from council.workspace.sse import (
     stream_expert_response,
     stream_rapporteur_synthesis,
 )
-from council.workspace.state import Message, Panel, Symposium, WorkspaceState
+from council.workspace.state import Message, Symposium, Session
 
 GUI_DIR = Path(__file__).resolve().parents[3] / "gui"
 
-app = FastAPI(title="COUNCIL Workspace API")
+app = FastAPI(title="COUNCIL Academy API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,16 +59,16 @@ def serve_workspace():
 
 
 
-def _load_or_404(ws_id: str) -> WorkspaceState:
+def _load_or_404(ws_id: str) -> Session:
     try:
         return load(ws_id)
     except ValueError:
-        raise HTTPException(404, f"Workspace '{ws_id}' not found")
+        raise HTTPException(404, f"Session '{ws_id}' not found")
 
 
 # ── Request models ───────────────────────────────────────────────────────────
 
-class CreateWorkspaceRequest(BaseModel):
+class CreateSessionRequest(BaseModel):
     query: str = ""
 
 
@@ -124,46 +124,39 @@ class SymposiumMessageRequest(BaseModel):
 
 # ── Workspace CRUD ───────────────────────────────────────────────────────────
 
-@app.post("/api/workspace")
-def create_workspace(req: CreateWorkspaceRequest):
-    ws = WorkspaceState(query=req.query)
+@app.post("/api/sessions")
+def create_session(req: CreateSessionRequest):
+    ws = Session(query=req.query)
     save(ws)
     return {"id": ws.id, "query": ws.query}
 
 
-@app.get("/api/workspace")
+@app.get("/api/sessions")
 def list_workspaces():
     return list_all()
 
 
-@app.get("/api/workspace/{ws_id}")
+@app.get("/api/sessions/{ws_id}")
 def get_workspace(ws_id: str):
     ws = _load_or_404(ws_id)
 
     return {
         "id": ws.id,
+        "name": ws.name,
         "query": ws.query,
-        "panels": [
+        "function_type": ws.function_type,
+        "experts": [
             {
-                "id": p.id,
-                "name": p.name,
-                "query": p.query,
-                "function_type": p.function_type,
-                "experts": [
-                    {
-                        "id": e.id,
-                        "name": e.name,
-                        "discipline": e.discipline,
-                        "bias": e.bias,
-                        "persona_prompt": e.persona_prompt,
-                        "photo_url": e.photo_url,
-                        "source_count": len(e.knowledge_pool.sources),
-                        "opinion_count": len(e.knowledge_pool.opinions),
-                    }
-                    for e in p.experts
-                ],
+                "id": e.id,
+                "name": e.name,
+                "discipline": e.discipline,
+                "bias": e.bias,
+                "persona_prompt": e.persona_prompt,
+                "photo_url": e.photo_url,
+                "source_count": len(e.knowledge_pool.sources),
+                "opinion_count": len(e.knowledge_pool.opinions),
             }
-            for p in ws.panels
+            for e in ws.experts
         ],
         "symposia": [
             {
@@ -180,7 +173,7 @@ def get_workspace(ws_id: str):
     }
 
 
-@app.delete("/api/workspace/{ws_id}")
+@app.delete("/api/sessions/{ws_id}")
 def delete_workspace(ws_id: str):
     _load_or_404(ws_id)  # ensure exists
     delete(ws_id)
@@ -189,7 +182,7 @@ def delete_workspace(ws_id: str):
 
 # ── Panels ───────────────────────────────────────────────────────────────────
 
-@app.post("/api/workspace/{ws_id}/panels")
+@app.post("/api/sessions/{ws_id}/panels")
 def create_panel(ws_id: str, req: CreatePanelRequest):
     ws = _load_or_404(ws_id)
 
@@ -209,41 +202,34 @@ def create_panel(ws_id: str, req: CreatePanelRequest):
     if not experts:
         raise HTTPException(500, "Moderator failed to propose experts")
 
-    panel = Panel(
-        name=req.query[:60] if req.query else req.function_type,
-        query=req.query,
-        function_type=req.function_type,
-        function_detail=req.function_detail,
-        experts=experts,
-    )
-    ws.panels.append(panel)
+    session.name = req.query[:60] if req.query else req.function_type
+    session.query = req.query
+    session.function_type = req.function_type
+    session.function_detail = req.function_detail
+    session.experts = experts
     save(ws)
 
-    return {"panel_id": panel.id, "experts": [{"id": e.id, "name": e.name, "discipline": e.discipline} for e in experts]}
+    return {"session_id": session.id, "experts": [{"id": e.id, "name": e.name, "discipline": e.discipline} for e in experts]}
 
 
-@app.put("/api/workspace/{ws_id}/panels/{panel_id}")
-def update_panel(ws_id: str, panel_id: str, req: UpdatePanelRequest):
+@app.put("/api/sessions/{ws_id}")
+def update_session(ws_id: str, req: UpdatePanelRequest):
     ws = _load_or_404(ws_id)
-    panel = ws.get_panel(panel_id)
-    if not panel:
-        raise HTTPException(404, "Panel not found")
-
     if req.name is not None:
-        panel.name = req.name
+        ws.name = req.name
     if req.query is not None:
-        panel.query = req.query
+        ws.query = req.query
     if req.function_type is not None:
-        panel.function_type = req.function_type
+        ws.function_type = req.function_type
     if req.function_detail is not None:
-        panel.function_detail = req.function_detail
+        ws.function_detail = req.function_detail
     save(ws)
     return {"ok": True}
 
 
 # ── Experts ──────────────────────────────────────────────────────────────────
 
-@app.put("/api/workspace/{ws_id}/experts/{expert_id}")
+@app.put("/api/sessions/{ws_id}/experts/{expert_id}")
 def update_expert(ws_id: str, expert_id: str, req: UpdateExpertRequest):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -258,7 +244,7 @@ def update_expert(ws_id: str, expert_id: str, req: UpdateExpertRequest):
     return {"ok": True}
 
 
-@app.get("/api/workspace/{ws_id}/experts/{expert_id}/pool")
+@app.get("/api/sessions/{ws_id}/experts/{expert_id}/pool")
 def get_expert_pool(ws_id: str, expert_id: str):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -287,7 +273,7 @@ def get_expert_pool(ws_id: str, expert_id: str):
     }
 
 
-@app.post("/api/workspace/{ws_id}/experts/{expert_id}/sources")
+@app.post("/api/sessions/{ws_id}/experts/{expert_id}/sources")
 def add_source(ws_id: str, expert_id: str, req: AddSourceRequest):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -307,15 +293,15 @@ def add_source(ws_id: str, expert_id: str, req: AddSourceRequest):
     return {"source_id": src.id, "title": src.title, "has_full_text": bool(src.full_text)}
 
 
-@app.post("/api/workspace/{ws_id}/experts/{expert_id}/upload")
+@app.post("/api/sessions/{ws_id}/experts/{expert_id}/upload")
 async def upload_file(ws_id: str, expert_id: str):
     """File upload handled via multipart form. Use from fastapi import UploadFile, File."""
-    raise HTTPException(501, "Use the /api/workspace/{ws_id}/experts/{expert_id}/upload/form endpoint with multipart")
+    raise HTTPException(501, "Use the /api/sessions/{ws_id}/experts/{expert_id}/upload/form endpoint with multipart")
 
 
 # ── Expert messaging (SSE) ───────────────────────────────────────────────────
 
-@app.post("/api/workspace/{ws_id}/experts/{expert_id}/message")
+@app.post("/api/sessions/{ws_id}/experts/{expert_id}/message")
 async def expert_message(ws_id: str, expert_id: str, req: MessageRequest):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -349,7 +335,7 @@ async def expert_message(ws_id: str, expert_id: str, req: MessageRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/api/workspace/{ws_id}/experts/{expert_id}/research")
+@app.post("/api/sessions/{ws_id}/experts/{expert_id}/research")
 async def expert_research_endpoint(ws_id: str, expert_id: str, req: ResearchRequest):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -380,7 +366,7 @@ async def expert_research_endpoint(ws_id: str, expert_id: str, req: ResearchRequ
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/api/workspace/{ws_id}/experts/{expert_id}/opinion")
+@app.post("/api/sessions/{ws_id}/experts/{expert_id}/opinion")
 async def expert_form_opinion(ws_id: str, expert_id: str, req: MessageRequest):
     ws = _load_or_404(ws_id)
     expert = ws.get_expert(expert_id)
@@ -413,19 +399,14 @@ async def expert_form_opinion(ws_id: str, expert_id: str, req: MessageRequest):
 
 # ── Symposia ─────────────────────────────────────────────────────────────────
 
-@app.post("/api/workspace/{ws_id}/symposia")
+@app.post("/api/sessions/{ws_id}/symposia")
 def create_symposium(ws_id: str, req: CreateSymposiumRequest):
     ws = _load_or_404(ws_id)
 
     if req.expert_ids:
         participant_ids = req.expert_ids
-    elif req.panel_id:
-        panel = ws.get_panel(req.panel_id)
-        if not panel:
-            raise HTTPException(404, "Panel not found")
-        participant_ids = [e.id for e in panel.experts]
     else:
-        raise HTTPException(400, "Provide panel_id or expert_ids")
+        participant_ids = [e.id for e in ws.experts]
 
     sym = Symposium(
         title=req.title or "Symposium",
@@ -438,7 +419,7 @@ def create_symposium(ws_id: str, req: CreateSymposiumRequest):
     return {"symposium_id": sym.id, "participants": participant_ids}
 
 
-@app.post("/api/workspace/{ws_id}/symposia/{sym_id}/round")
+@app.post("/api/sessions/{ws_id}/symposia/{sym_id}/round")
 async def symposium_round(ws_id: str, sym_id: str):
     """Run one structured debate round — each expert speaks in turn."""
     ws = _load_or_404(ws_id)
@@ -505,7 +486,7 @@ async def symposium_round(ws_id: str, sym_id: str):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/api/workspace/{ws_id}/symposia/{sym_id}/synthesize")
+@app.post("/api/sessions/{ws_id}/symposia/{sym_id}/synthesize")
 async def symposium_synthesize(ws_id: str, sym_id: str):
     ws = _load_or_404(ws_id)
     sym = ws.get_symposium(sym_id)
@@ -545,7 +526,7 @@ async def symposium_synthesize(ws_id: str, sym_id: str):
 
 # ── Export ───────────────────────────────────────────────────────────────────
 
-@app.post("/api/workspace/{ws_id}/export")
+@app.post("/api/sessions/{ws_id}/export")
 def export_workspace(ws_id: str):
     ws = _load_or_404(ws_id)
 
@@ -568,7 +549,7 @@ def export_workspace(ws_id: str):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "system": "workspace"}
+    return {"status": "ok", "system": "academy"}
 
 
 # ── GUI static files ─────────────────────────────────────────────────────────

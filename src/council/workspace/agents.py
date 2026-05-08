@@ -40,7 +40,7 @@ from council.tools.library_tool import LibraryReadTool, create_library_tools
 from council.tools.pdf_tool import create_pdf_tool
 from council.tools.search_tool import create_search_tool
 from council.workspace.llm import ask_agent
-from council.workspace.state import Expert, KnowledgePool, PoolSource, Opinion
+from council.workspace.state import Expert, KnowledgePool, PoolSource, Opinion, Session
 
 
 # ── ChromaDB: per-expert collections ─────────────────────────────────────────

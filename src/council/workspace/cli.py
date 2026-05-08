@@ -2,7 +2,7 @@
 """
 council/workspace/cli.py
 
-Module-based CLI for the workspace system. Each subcommand is independently
+Module-based CLI for the session system. Each subcommand is independently
 invoable — no pipeline, no vertical dependencies.
 
 Usage:
@@ -41,7 +41,7 @@ from council.workspace.agents import (
     upload_file_to_expert,
 )
 from council.workspace.db import delete, list_all, load, save
-from council.workspace.state import Panel, Symposium, WorkspaceState
+from council.workspace.state import Symposium, Session
 
 console = Console()
 
@@ -53,14 +53,14 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
-def _load(ws_id: str) -> WorkspaceState:
+def _load(ws_id: str) -> Session:
     try:
         return load(ws_id)
     except ValueError:
-        _die(f"Workspace not found: {ws_id}")
+        _die(f"Session not found: {ws_id}")
 
 
-def _find_expert(ws: WorkspaceState, expert_id: str):
+def _find_expert(ws: Session, expert_id: str):
     expert = ws.get_expert(expert_id)
     if not expert:
         _die(f"Expert not found: {expert_id}")
@@ -70,40 +70,39 @@ def _find_expert(ws: WorkspaceState, expert_id: str):
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
 def cmd_new(args: argparse.Namespace) -> None:
-    ws = WorkspaceState(query=args.query)
+    ws = Session(query=args.query)
     save(ws)
-    console.print(f"[green]Workspace created:[/green] [bold]{ws.id}[/bold]")
+    console.print(f"[green]Session created:[/green] [bold]{ws.id}[/bold]")
     console.print(f"  Query: [italic]{args.query}[/italic]")
 
 
 def cmd_load(args: argparse.Namespace) -> None:
     ws = _load(args.id)
-    console.print(f"[bold]Workspace:[/bold] {ws.id}")
+    console.print(f"[bold]Session:[/bold] {ws.id}")
     console.print(f"  Query: [italic]{ws.query or '(none)'}[/italic]")
-    console.print(f"  Panels: {len(ws.panels)}")
+    console.print(f"  Experts: {len(ws.experts)}")
     console.print(f"  Messages: {len(ws.messages)}")
     console.print(f"  Symposia: {len(ws.symposia)}")
 
 
 def cmd_list(args: argparse.Namespace) -> None:
     if args.all:
-        workspaces = list_all()
-        if not workspaces:
-            console.print("[dim]No workspaces found.[/dim]")
+        sessions = list_all()
+        if not sessions:
+            console.print("[dim]No sessions found.[/dim]")
             return
-        table = Table(title="Workspaces")
+        table = Table(title="Sessions")
         table.add_column("ID", style="cyan")
         table.add_column("Updated", style="dim")
-        for w in workspaces:
+        for w in sessions:
             table.add_row(w["id"], w["updated_at"])
         console.print(table)
         return
 
     ws = _load(args.ws_id)
-    console.print(Rule(f"Workspace: {ws.id}"))
-    for panel in ws.panels:
-        console.print(f"\n[bold]Panel:[/bold] {panel.name or panel.id} (query: {panel.query or '(none)'})")
-        for e in panel.experts:
+    console.print(Rule(f"Session: {ws.id}"))
+    console.print(f"\n[bold]Session:[/bold] {ws.name or ws.id} (query: {ws.query or '(none)'})")
+    for e in ws.experts:
             n_sources = len(e.knowledge_pool.sources)
             n_opinions = len(e.knowledge_pool.opinions)
             console.print(f"  [{e.id}] [bold]{e.name}[/bold] — {e.discipline}")
@@ -122,11 +121,12 @@ def cmd_panel(args: argparse.Namespace) -> None:
     if not experts:
         _die("Moderator failed to propose experts.")
 
-    panel = Panel(name=args.query[:60], query=args.query, experts=experts)
-    ws.panels.append(panel)
+    ws.name = args.query[:60]
+    ws.query = args.query
+    ws.experts = experts
     save(ws)
 
-    console.print(f"\n[green]Panel created:[/green] [bold]{panel.id}[/bold]")
+    console.print(f"\n[green]Experts proposed:[/green]")
     for e in experts:
         console.print(f"  [{e.id}] [bold]{e.name}[/bold] — {e.discipline} ({e.bias})")
 
@@ -137,7 +137,7 @@ def cmd_add_url(args: argparse.Namespace) -> None:
 
     src = add_source_to_expert(
         expert=expert,
-        workspace_id=ws.id,
+        session_id=ws.id,
         url=args.url,
         title=args.title or "",
         snippet=args.snippet or "",
@@ -159,7 +159,7 @@ def cmd_upload(args: argparse.Namespace) -> None:
     if not file_path.exists():
         _die(f"File not found: {args.file_path}")
 
-    src = upload_file_to_expert(expert=expert, workspace_id=ws.id, file_path=args.file_path)
+    src = upload_file_to_expert(expert=expert, session_id=ws.id, file_path=args.file_path)
     if not src:
         _die(f"Could not parse file: {args.file_path}")
 
@@ -192,7 +192,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
 
     response = expert_respond(
         expert=expert,
-        workspace_id=ws.id,
+        session_id=ws.id,
         query=ws.query or "the research context",
         message=args.message,
     )
@@ -204,35 +204,31 @@ def cmd_ask(args: argparse.Namespace) -> None:
 
 def cmd_debate(args: argparse.Namespace) -> None:
     ws = _load(args.ws_id)
-    panel = ws.get_panel(args.panel_id)
-    if not panel:
-        _die(f"Panel not found: {args.panel_id}")
-
     sym = Symposium(
-        title=f"Debate: {panel.query[:50]}",
+        title=f"Debate: {ws.query[:50]}",
         format="structured",
-        participant_ids=[e.id for e in panel.experts],
+        participant_ids=[e.id for e in ws.experts],
     )
     ws.symposia.append(sym)
 
     transcript_lines: list[str] = []
 
-    for i, expert in enumerate(panel.experts):
+    for i, expert in enumerate(ws.experts):
         turn = i + 1
         console.print(f"\n[yellow]Turn {turn}: {expert.name}[/yellow]")
 
         context = "\n".join(transcript_lines) if transcript_lines else "(You are the first speaker.)"
         prompt = (
             f"=== DEBATE TRANSCRIPT SO FAR ===\n{context}\n=== END TRANSCRIPT ===\n\n"
-            f"Present your evidence-based position on: {panel.query}\n\n"
+            f"Present your evidence-based position on: {ws.query}\n\n"
             f"As turn {turn}, respond to previous speakers and present your unique "
             f"disciplinary perspective grounded in your knowledge pool."
         )
 
         speech = expert_respond(
             expert=expert,
-            workspace_id=ws.id,
-            query=panel.query,
+            session_id=ws.id,
+            query=ws.query,
             message=prompt,
         )
         transcript_lines.append(f"[Turn {turn}] **{expert.name}** ({expert.discipline}):\n{speech}")
@@ -283,20 +279,22 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Demo mode: full pipeline from query to synthesis. Convenience, not the primary interface."""
-    console.print(f"\n[bold]COUNCIL Workspace — Demo Run[/bold]\n")
+    console.print(f"\n[bold]COUNCIL Session — Demo Run[/bold]\n")
     query = args.query
 
-    # Create workspace
-    ws = WorkspaceState(query=query)
-    console.print(f"Workspace [bold]{ws.id}[/bold]")
+    # Create session
+    ws = Session(query=query)
+    console.print(f"Session [bold]{ws.id}[/bold]")
 
     # Panel
     console.print(Rule("Panel"))
     experts = moderator_propose_panel(query=query, max_experts=args.num)
     if not experts:
         _die("Moderator failed.")
-    panel = Panel(name=query[:60], query=query, experts=experts)
-    ws.panels.append(panel)
+    ws.name = query[:60]
+    ws.query = query
+    ws.experts = experts
+    
     for e in experts:
         console.print(f"  [bold]{e.name}[/bold] — {e.discipline}")
 
@@ -319,7 +317,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
     ws.symposia.append(sym)
     transcript_lines: list[str] = []
-    for i, expert in enumerate(panel.experts):
+    for i, expert in enumerate(ws.experts):
         turn = i + 1
         console.print(f"[yellow]Turn {turn}: {expert.name}[/yellow]")
         context = "\n".join(transcript_lines) if transcript_lines else "(You are the first speaker.)"
@@ -327,7 +325,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             f"=== DEBATE TRANSCRIPT SO FAR ===\n{context}\n=== END TRANSCRIPT ===\n\n"
             f"Present your evidence-based position on: {query}"
         )
-        speech = expert_respond(expert=expert, workspace_id=ws.id, query=query, message=prompt)
+        speech = expert_respond(expert=expert, session_id=ws.id, query=query, message=prompt)
         transcript_lines.append(f"[Turn {turn}] **{expert.name}** ({expert.discipline}):\n{speech}")
         ws.add_message(role="agent", agent_id=expert.id, agent_name=expert.name,
                        symposium_id=sym.id, content=speech, turn=turn)
@@ -339,37 +337,37 @@ def cmd_run(args: argparse.Namespace) -> None:
     scorecard = str([
         {"claim": s.snippet[:100], "agent_name": s.added_by, "source_url": s.url,
          "verification_status": s.verification_status}
-        for e in panel.experts for s in e.knowledge_pool.sources if s.verification_status == "verified"
+        for e in ws.experts for s in e.knowledge_pool.sources if s.verification_status == "verified"
     ])
     synthesis = rapporteur_synthesize(transcript=transcript, scorecard=scorecard, query=query)
     sym.synthesis = synthesis
     save(ws)
 
     console.print(RichPanel(synthesis[:1200], title="Synthesis"))
-    console.print(f"\n[green]Done. Workspace: [bold]{ws.id}[/bold][/green]")
+    console.print(f"\n[green]Done. Session: [bold]{ws.id}[/bold][/green]")
 
 
 # ── Arg parser ───────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="council-workspace",
-        description="COUNCIL Workspace CLI — module-based, no pipeline",
+        prog="council-session",
+        description="COUNCIL Session CLI — module-based, no pipeline",
     )
     sub = parser.add_subparsers(dest="command")
 
     # new
-    p = sub.add_parser("new", help="Create a new workspace")
+    p = sub.add_parser("new", help="Create a new session")
     p.add_argument("query", nargs="?", default="")
 
     # load
-    p = sub.add_parser("load", help="Show workspace summary")
+    p = sub.add_parser("load", help="Show session summary")
     p.add_argument("id")
 
     # list
-    p = sub.add_parser("list", help="List workspaces or experts")
+    p = sub.add_parser("list", help="List sessions or experts")
     p.add_argument("ws_id", nargs="?")
-    p.add_argument("--all", "-a", action="store_true", help="List all workspaces")
+    p.add_argument("--all", "-a", action="store_true", help="List all sessions")
 
     # panel
     p = sub.add_parser("panel", help="Propose an expert panel")
@@ -403,9 +401,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("message")
 
     # debate
-    p = sub.add_parser("debate", help="Run a structured debate with a panel")
+    p = sub.add_parser("debate", help="Run a structured debate")
     p.add_argument("ws_id")
-    p.add_argument("panel_id")
 
     # synthesize
     p = sub.add_parser("synthesize", help="Rapporteur synthesizes a symposium")
