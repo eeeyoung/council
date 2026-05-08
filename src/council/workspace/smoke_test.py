@@ -84,6 +84,7 @@ def run(query: str, max_experts: int = 3) -> WorkspaceState:
 
     response = expert_respond(
         expert=first_expert,
+        workspace_id=ws.id,
         query=query,
         message=f"Based on your research, what is your position on: {query}",
     )
@@ -118,7 +119,7 @@ As turn {turn}, you must respond to previous speakers if any, and present your
 unique disciplinary perspective grounded in your knowledge pool sources.
 """
 
-        speech = expert_respond(expert=expert, query=query, message=prompt)
+        speech = expert_respond(expert=expert, workspace_id=ws.id, query=query, message=prompt)
         transcript_lines.append(f"[Turn {turn}] **{expert.name}** ({expert.discipline}):\n{speech}")
 
         ws.add_message(
