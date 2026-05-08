@@ -316,6 +316,29 @@ async function addSource() {
   renderContextPanel(_activeExpert, 'sources');
 }
 
+function showUploadModal() {
+  if (!_activeExpert) return;
+  showModal(`<h3>Upload File</h3><p>Upload a PDF or text file to <strong>${esc(_activeExpert.name)}</strong>'s pool.</p>
+    <input type="file" id="modal-upload-file" accept=".pdf,.txt,.md,.csv,.html" style="margin-bottom:12px;">
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeModal()">Cancel</button>
+    <button class="modal-btn primary" onclick="uploadFile()">Upload</button></div>`);
+}
+
+async function uploadFile() {
+  const fi = document.getElementById('modal-upload-file');
+  const file = fi?.files?.[0];
+  if (!file) { toast('Select a file', 'error'); return; }
+  closeModal(); toast(`Uploading ${file.name}…`, 'success');
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const resp = await fetch(`${API}/sessions/${_sessionId}/experts/${_activeExpert.id}/upload`, { method:'POST', body:fd });
+    if (!resp.ok) { const e = await resp.json(); toast(e.detail||'Upload failed','error'); return; }
+    const data = await resp.json();
+    toast(`Uploaded — ${data.size} chars`, 'success');
+    renderContextPanel(_activeExpert, 'sources');
+  } catch(e) { toast('Upload failed: '+e.message, 'error'); }
+}
+
 async function formOpinionForExpert() {
   if (!_activeExpert) return;
   toast('Forming opinion…', 'success');
@@ -349,6 +372,7 @@ async function renderContextPanel(expert, tab = 'evidence') {
       const pool = await resp.json();
       let html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
       html += '<button class="sidebar-btn" style="flex:1;" onclick="showAddSourceModal()">+ Add URL</button>';
+      html += '<button class="sidebar-btn" style="flex:1;" onclick="showUploadModal()">📄 Upload</button>';
       html += '<button class="sidebar-btn" style="flex:1;" onclick="formOpinionForExpert()">💡 Opinion</button></div>';
       if (!pool?.sources?.length && !pool?.opinions?.length)
         html += '<p style="font-size:12px;color:var(--text-dim)">No sources yet.</p>';

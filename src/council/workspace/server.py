@@ -15,7 +15,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -294,9 +294,36 @@ def add_source(ws_id: str, expert_id: str, req: AddSourceRequest):
 
 
 @app.post("/api/sessions/{ws_id}/experts/{expert_id}/upload")
-async def upload_file(ws_id: str, expert_id: str):
-    """File upload handled via multipart form. Use from fastapi import UploadFile, File."""
-    raise HTTPException(501, "Use the /api/sessions/{ws_id}/experts/{expert_id}/upload/form endpoint with multipart")
+async def upload_file_endpoint(ws_id: str, expert_id: str, file: UploadFile = File(...)):
+    ws = _load_or_404(ws_id)
+    expert = ws.get_expert(expert_id)
+    if not expert:
+        raise HTTPException(404, "Expert not found")
+
+    # Save uploaded file to a temp location
+    import tempfile
+    suffix = Path(file.filename or "upload").suffix or ".txt"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    src = upload_file_to_expert(
+        expert=expert,
+        session_id=ws_id,
+        file_path=tmp_path,
+    )
+
+    # Clean up temp file
+    try:
+        Path(tmp_path).unlink()
+    except Exception:
+        pass
+
+    if not src:
+        raise HTTPException(400, "Could not parse file. Supported: PDF, plain text.")
+
+    save(ws)
+    return {"source_id": src.id, "title": src.title, "size": len(src.full_text)}
 
 
 # ── Expert messaging (SSE) ───────────────────────────────────────────────────
