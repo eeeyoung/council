@@ -79,8 +79,11 @@ def list_all() -> list[dict]:
 
 
 def delete(workspace_id: str) -> None:
-    """Delete a workspace."""
+    """Delete a workspace. Raises ValueError if not found."""
     init_db()
     with closing(_connect()) as conn:
+        cursor = conn.execute("SELECT 1 FROM workspaces WHERE id = ?", (workspace_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"No workspace found with id: {workspace_id}")
         with conn:
             conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
