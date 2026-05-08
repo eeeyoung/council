@@ -186,9 +186,10 @@ function findExpert(expertId) {
 
 function renderConversationHeader(expert) {
   const av = _expertAvatars[expert.id];
-  document.getElementById('main-content').innerHTML = `
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
     <div class="main-header">
-      <div class="avatar-wrap">${av ? createAvatarElement(av, 44).outerHTML : ''}</div>
+      <div class="avatar-wrap" id="header-avatar-wrap"></div>
       <div class="header-info">
         <div class="header-name">${esc(expert.name)}</div>
         <div class="header-discipline">${esc(expert.discipline)} · ${esc(expert.bias || '')}</div>
@@ -198,6 +199,10 @@ function renderConversationHeader(expert) {
         <button class="header-action-btn" onclick="showContextPanel()">☰ Context</button>
       </div>
     </div><div id="conversation"></div>`;
+  if (av) {
+    const wrap = document.getElementById('header-avatar-wrap');
+    wrap.appendChild(createAvatarElement(av, 44));
+  }
 }
 
 function renderConversation(expert) {
@@ -238,18 +243,34 @@ function appendMessage(role, name, content, accentClass, turn) {
   div.className = `message ${role}`;
   if (accentClass && role === 'agent') div.classList.add(`msg-accent-${accentClass}`);
 
-  let avHtml = '';
-  if (role === 'agent' && _activeExpert) {
-    const av = _expertAvatars[_activeExpert.id];
-    if (av) avHtml = `<div class="msg-avatar">${createAvatarElement(av, 34).outerHTML}</div>`;
-  } else if (role === 'user') {
-    avHtml = '<div class="msg-avatar" style="background:var(--gold-bg);display:flex;align-items:center;justify-content:center;">👤</div>';
-  }
-
   const turnLbl = turn ? ` <span style="font-size:10px;color:var(--text-dim)">Turn ${turn}</span>` : '';
   const hdr = `<div class="msg-header"><strong>${esc(name)}</strong>${turnLbl}</div>`;
   const body = role === 'agent' ? preprocessMarkdown(content) : esc(content);
-  div.innerHTML = `${avHtml}<div class="msg-body">${hdr}<div class="msg-bubble">${marked.parse(body)}</div></div>`;
+
+  // Avatar wrapper
+  let avWrap = document.createElement('div');
+  avWrap.className = 'msg-avatar';
+  if (role === 'agent' && _activeExpert) {
+    const av = _expertAvatars[_activeExpert.id];
+    if (av) avWrap.appendChild(createAvatarElement(av, 34));
+  } else if (role === 'user') {
+    avWrap.style.cssText = 'background:var(--gold-bg);display:flex;align-items:center;justify-content:center;';
+    avWrap.textContent = '👤';
+  }
+
+  // Message body
+  const bodyDiv = document.createElement('div');
+  bodyDiv.className = 'msg-body';
+  bodyDiv.innerHTML = `${hdr}<div class="msg-bubble">${marked.parse(body)}</div>`;
+
+  // Assemble
+  if (role === 'user') {
+    div.appendChild(bodyDiv);
+    div.appendChild(avWrap);
+  } else {
+    div.appendChild(avWrap);
+    div.appendChild(bodyDiv);
+  }
   conv.appendChild(div);
   conv.scrollTop = conv.scrollHeight;
 }
