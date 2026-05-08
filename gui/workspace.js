@@ -86,13 +86,18 @@ async function showSessionList() {
 
 async function loadSession(id) {
   _sessionId = id;
-  const resp = await fetch(`${API}/sessions/${id}`);
-  _session = await resp.json();
+  await refreshSessionData();
   document.getElementById('sidebar-ws-name').textContent = `Session · ${id}`;
   assignExpertAttributes();
   renderSidebar();
   renderSymposiaList();
   showEmptyState();
+}
+
+async function refreshSessionData() {
+  if (!_sessionId) return;
+  const resp = await fetch(`${API}/sessions/${_sessionId}`);
+  _session = await resp.json();
 }
 
 // ── Expert attributes ───────────────────────────────────────────────────────
@@ -277,8 +282,8 @@ async function sendMessage() {
   input.disabled = false; sendBtn.disabled = false;
   if (stopBtn) stopBtn.style.display = 'none';
   input.focus();
-  // Reload session to get latest messages
-  loadSession(_sessionId);
+  // Silently refresh session data (don't touch the UI)
+  refreshSessionData();
 }
 
 function cancelGeneration() {
@@ -483,7 +488,7 @@ async function createAndStartSymposium() {
   });
   const sym = await resp.json();
   _activeSymposium = sym.symposium_id; _activeExpert = null;
-  await loadSession(_sessionId);
+  await refreshSessionData();
   document.getElementById('input-bar').style.display = 'none';
   document.getElementById('main-content').innerHTML = `
     <div class="main-header"><div style="font-size:24px;">⚡</div>
@@ -553,7 +558,7 @@ async function runSymposiumRound() {
     toast('Round failed', 'error');
   }
   if (btn) { btn.disabled = false; btn.textContent = '▶ Run Round'; }
-  await loadSession(_sessionId);
+  await refreshSessionData();
 }
 
 function highlightSpeaker(name) {
@@ -587,7 +592,7 @@ async function synthesizeSymposium() {
     );
   } catch(e) { dismissToast(tid); toast('Failed: '+e.message,'error'); }
   if (btn) { btn.disabled=false; btn.textContent='📋 Synthesize'; }
-  await loadSession(_sessionId);
+  await refreshSessionData();
 }
 
 // ── Modals ──────────────────────────────────────────────────────────────────
@@ -623,7 +628,7 @@ async function addExperts() {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query, max_experts:3}),
   });
   const data = await resp.json();
-  await loadSession(_sessionId);
+  await refreshSessionData();
   toast(`Experts added: ${data.experts?.length||0}`, 'success');
 }
 
