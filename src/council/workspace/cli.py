@@ -277,6 +277,16 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
     console.print(RichPanel(synthesis[:1200], title="Synthesis"))
 
 
+def cmd_export(args: argparse.Namespace) -> None:
+    from council.workspace.export import export_all
+    ws = _load(args.ws_id)
+    formats = None if args.format == "all" else [args.format]
+    result = export_all(ws, formats)
+    console.print(f"[green]Exported:[/green]")
+    for fmt, filename in result.items():
+        console.print(f"  {fmt}: [bold]{filename}[/bold]")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Demo mode: full pipeline from query to synthesis. Convenience, not the primary interface."""
     console.print(f"\n[bold]COUNCIL Session — Demo Run[/bold]\n")
@@ -409,6 +419,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ws_id")
     p.add_argument("symposium_id")
 
+    # export
+    p = sub.add_parser("export", help="Export dossier, memo, scorecard, or transcript")
+    p.add_argument("ws_id")
+    p.add_argument("--format", "-f", default="all", choices=["all","dossier","memo","scorecard","transcript"])
+
     # run (demo)
     p = sub.add_parser("run", help="Demo: full pipeline from query to synthesis")
     p.add_argument("query", nargs="?", default="What is the best carbon pricing mechanism?")
@@ -436,6 +451,7 @@ def main() -> None:
         "ask": cmd_ask,
         "debate": cmd_debate,
         "synthesize": cmd_synthesize,
+        "export": cmd_export,
         "run": cmd_run,
     }
 

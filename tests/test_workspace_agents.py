@@ -101,7 +101,7 @@ class TestKnowledgePoolOps:
         expert = Expert(name="Socratyes", discipline="Economics")
         src = add_source_to_expert(
             expert=expert,
-            workspace_id="test_ws",
+            session_id="test_ws",
             url="https://example.com/carbon-tax",
             title="Carbon Tax Study",
             snippet="Carbon taxes reduce emissions 15% faster than cap-and-trade.",
@@ -116,7 +116,7 @@ class TestKnowledgePoolOps:
         expert = Expert(name="Test", discipline="Physics")
         src = add_source_to_expert(
             expert=expert,
-            workspace_id="test_ws",
+            session_id="test_ws",
             url="https://invalid.example/nonexistent-page-12345",
             title="Nonexistent",
             snippet="This page doesn't exist.",
@@ -133,7 +133,7 @@ class TestKnowledgePoolOps:
         expert = Expert(name="Test", discipline="Physics")
         src = upload_file_to_expert(
             expert=expert,
-            workspace_id="test_ws",
+            session_id="test_ws",
             file_path=str(file_path),
         )
         assert src is not None
@@ -146,7 +146,7 @@ class TestKnowledgePoolOps:
         expert = Expert(name="Test", discipline="Physics")
         src = upload_file_to_expert(
             expert=expert,
-            workspace_id="test_ws",
+            session_id="test_ws",
             file_path="/nonexistent/file.pdf",
         )
         assert src is None
@@ -218,7 +218,7 @@ class TestAgentCalls:
 
         response = expert_respond(
             expert=expert,
-            workspace_id="test_ws_integration",
+            session_id="test_ws_integration",
             query="What is the best carbon pricing mechanism?",
             message="What does the economic evidence say about carbon taxes vs cap-and-trade?",
         )
@@ -242,7 +242,7 @@ class TestAgentCalls:
 
         opinion = form_opinion(
             expert=expert,
-            workspace_id="test_ws_integration",
+            session_id="test_ws_integration",
             query="What is the best carbon pricing mechanism?",
         )
         if opinion:  # May be None if retrieval fails in test

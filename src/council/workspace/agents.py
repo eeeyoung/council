@@ -52,11 +52,11 @@ _clients: dict[str, chromadb.ClientAPI] = {}
 _collections: dict[str, chromadb.Collection] = {}
 
 
-def _get_expert_collection(workspace_id: str, expert_id: str) -> chromadb.Collection:
+def _get_expert_collection(session_id: str, expert_id: str) -> chromadb.Collection:
     """Get or create a ChromaDB collection scoped to one expert."""
-    key = f"{workspace_id}_{expert_id}"
+    key = f"{session_id}_{expert_id}"
     if key not in _clients:
-        db_path = os.path.join(os.getcwd(), "chroma_db", f"ws_{workspace_id}")
+        db_path = os.path.join(os.getcwd(), "chroma_db", f"ws_{session_id}")
         os.makedirs(db_path, exist_ok=True)
         _clients[key] = chromadb.PersistentClient(
             path=db_path,
@@ -74,7 +74,7 @@ def _get_expert_collection(workspace_id: str, expert_id: str) -> chromadb.Collec
 
 
 def _index_source_in_collection(
-    workspace_id: str,
+    session_id: str,
     expert_id: str,
     source: PoolSource,
     chunk_size: int = 500,
@@ -91,7 +91,7 @@ def _index_source_in_collection(
     if not chunks:
         return 0
 
-    collection = _get_expert_collection(workspace_id, expert_id)
+    collection = _get_expert_collection(session_id, expert_id)
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict] = []
@@ -115,13 +115,13 @@ def _index_source_in_collection(
 
 
 def _retrieve_from_expert_pool(
-    workspace_id: str,
+    session_id: str,
     expert_id: str,
     query: str,
     n_results: int = 5,
 ) -> list[dict]:
     """Search the expert's ChromaDB collection and return relevant chunks."""
-    collection = _get_expert_collection(workspace_id, expert_id)
+    collection = _get_expert_collection(session_id, expert_id)
     if collection.count() == 0:
         return []
 
@@ -285,7 +285,7 @@ def _enrich_source(source: PoolSource) -> PoolSource:
 
 def add_source_to_expert(
     expert: Expert,
-    workspace_id: str,
+    session_id: str,
     url: str = "",
     title: str = "",
     snippet: str = "",
@@ -314,7 +314,7 @@ def add_source_to_expert(
         source = _enrich_source(source)
 
     # Index into ChromaDB
-    chunks_indexed = _index_source_in_collection(workspace_id, expert.id, source)
+    chunks_indexed = _index_source_in_collection(session_id, expert.id, source)
 
     # Store metadata
     expert.knowledge_pool.sources.append(source)
@@ -324,7 +324,7 @@ def add_source_to_expert(
 
 def upload_file_to_expert(
     expert: Expert,
-    workspace_id: str,
+    session_id: str,
     file_path: str | Path,
 ) -> PoolSource | None:
     """Parse a PDF/DOC file and add it to the expert's knowledge pool.
@@ -359,7 +359,7 @@ def upload_file_to_expert(
     )
 
     # Index into ChromaDB
-    _index_source_in_collection(workspace_id, expert.id, source)
+    _index_source_in_collection(session_id, expert.id, source)
 
     # Store metadata
     expert.knowledge_pool.sources.append(source)
@@ -372,7 +372,7 @@ def upload_file_to_expert(
 
 def form_opinion(
     expert: Expert,
-    workspace_id: str,
+    session_id: str,
     query: str,
     verbose: bool = False,
 ) -> Opinion | None:
@@ -381,7 +381,7 @@ def form_opinion(
     Uses RAG retrieval to find relevant chunks, then has the expert synthesize
     an opinion. Only verified sources are considered."""
     # Retrieve from the expert's pool
-    retrieved = _retrieve_from_expert_pool(workspace_id, expert.id, query)
+    retrieved = _retrieve_from_expert_pool(session_id, expert.id, query)
 
     verified_chunks = [r for r in retrieved if r["verification_status"] == "verified"]
     if not verified_chunks:
@@ -456,7 +456,7 @@ Return a JSON object with:
 
 def expert_respond(
     expert: Expert,
-    workspace_id: str,
+    session_id: str,
     query: str,
     message: str,
     verbose: bool = False,
@@ -470,7 +470,7 @@ def expert_respond(
     exp_def = _expert_to_definition(expert)
 
     # RAG retrieval
-    retrieved = _retrieve_from_expert_pool(workspace_id, expert.id, message)
+    retrieved = _retrieve_from_expert_pool(session_id, expert.id, message)
 
     search_tool = create_search_tool()
     library_write, library_read = create_library_tools()

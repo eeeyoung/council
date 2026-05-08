@@ -526,23 +526,17 @@ async def symposium_synthesize(ws_id: str, sym_id: str):
 
 # ── Export ───────────────────────────────────────────────────────────────────
 
+
+class ExportRequest(BaseModel):
+    formats: list[str] = ["dossier", "memo", "scorecard", "transcript"]
+
+
 @app.post("/api/sessions/{ws_id}/export")
-def export_workspace(ws_id: str):
+def export_session(ws_id: str, req: ExportRequest = ExportRequest()):
+    from council.workspace.export import export_all
     ws = _load_or_404(ws_id)
-
-    export_data = {
-        "workspace_id": ws.id,
-        "query": ws.query,
-        "panels": [p.model_dump() for p in ws.panels],
-        "symposia": [s.model_dump() for s in ws.symposia],
-        "messages": [m.model_dump() for m in ws.messages],
-    }
-
-    filename = f"{ws.id}_export.json"
-    filepath = OUTPUTS_DIR / filename
-    filepath.write_text(json.dumps(export_data, indent=2, ensure_ascii=False, default=str))
-
-    return {"file": filename, "path": str(filepath)}
+    result = export_all(ws, req.formats)
+    return {"files": result, "session_id": ws_id}
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
