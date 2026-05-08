@@ -210,14 +210,31 @@ def _pool_to_text(pool: KnowledgePool) -> str:
 
 
 def _parse_json(raw: str) -> dict | list | None:
-    """Extract and parse JSON from an LLM output string."""
+    """Extract and parse JSON from an LLM output string.
+
+    Handles markdown fences, preamble text, and trailing text."""
     cleaned = re.sub(r"```(?:json)?", "", raw).strip()
-    start = cleaned.find("[") if cleaned.startswith("[") else cleaned.find("{")
-    if start == -1:
+
+    # Find the first [ or { — whichever comes first (handles preamble text)
+    bracket_start = cleaned.find("[")
+    brace_start = cleaned.find("{")
+    if bracket_start == -1 and brace_start == -1:
         return None
-    end = cleaned.rfind("]") if cleaned.startswith("[") else cleaned.rfind("}")
-    if end == -1:
+    if bracket_start == -1:
+        start = brace_start
+        is_array = False
+    elif brace_start == -1:
+        start = bracket_start
+        is_array = True
+    else:
+        start = min(bracket_start, brace_start)
+        is_array = start == bracket_start
+
+    # Find the matching closing character
+    end = cleaned.rfind("]") if is_array else cleaned.rfind("}")
+    if end == -1 or end <= start:
         return None
+
     try:
         json_str = cleaned[start : end + 1]
         json_str = re.sub(r",\s*([}\]])", r"\1", json_str)
