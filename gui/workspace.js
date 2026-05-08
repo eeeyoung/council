@@ -15,6 +15,7 @@ let _sessionId = null;
 let _session = null;        // full session JSON from GET /api/sessions/{id}
 let _activeExpert = null;   // {id, name, discipline, ...}
 let _activeSymposium = null;
+let _activeContextTab = 'evidence';
 let _avatarPool = [];
 let _expertAvatars = {};    // expert_id → avatarDef
 let _expertAccents = {};    // expert_id → accent color class
@@ -174,7 +175,7 @@ function selectExpert(expertId) {
   renderConversation(expert);
   document.getElementById('input-bar').style.display = 'flex';
   showContextPanel();
-  renderContextPanel(expert);
+  renderContextPanel(expert, _activeContextTab);
 }
 
 function findExpert(expertId) {
@@ -357,12 +358,18 @@ async function formOpinionForExpert() {
 function showContextPanel() { document.getElementById('context-panel').classList.remove('collapsed'); }
 function hideContextPanel() { document.getElementById('context-panel').classList.add('collapsed'); }
 function switchContextTab(tab, btn) {
+  _activeContextTab = tab;
   document.querySelectorAll('.context-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   if (_activeExpert) renderContextPanel(_activeExpert, tab);
 }
 
 async function renderContextPanel(expert, tab = 'evidence') {
+  // Sync tab button highlights
+  document.querySelectorAll('.context-tab').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim().toLowerCase().startsWith(tab));
+  });
+
   const content = document.getElementById('context-content');
   if (!content) return;
 
