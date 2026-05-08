@@ -419,6 +419,8 @@ def form_opinion(
 
     description = f"""
 You are {expert.name}, a {expert.discipline} expert.
+Your intellectual leaning: {expert.bias}.
+Your personality: {expert.persona_prompt}
 
 Research context: "{query}"
 
@@ -504,6 +506,8 @@ def expert_respond(
 
     description = f"""
 You are {expert.name}, a {expert.discipline} expert.
+Your intellectual leaning: {expert.bias}.
+Your personality: {expert.persona_prompt}
 
 Research context: "{query}"
 
@@ -517,18 +521,23 @@ Research context: "{query}"
 {message}
 === END MESSAGE ===
 
-Your task: Respond to the message above. You MUST reason from your knowledge pool.
-Cite specific sources from the retrieved passages. If your pool has opinions, build
-on them. If no retrieved passages are relevant, acknowledge that and suggest what
-research is needed.
+IMPORTANT — First, classify the message:
+- If it is CASUAL (greeting, introduction, small talk, "who are you", "what's your name",
+  "how are you", chitchat, or personal questions about yourself): respond naturally in
+  character — be warm, personable, and stay true to your personality and discipline.
+  Do NOT use the structured debate format. Just be yourself.
+- If it is SCIENTIFIC (research questions, evidence requests, analysis, debate):
+  use the structured debate format below. Reason from your knowledge pool. Cite sources.
 
-Use the structured debate format: ## Position, **Keywords:**, ## Evidence (with
-### Finding, **Claim:**, **Source:**, **Quote:**). Only include ## Response to Peers
-if the message is from another expert challenging your position.
+Use the structured debate format ONLY for scientific inquiries.
+
 """
 
     expected_output = """
-A structured response using EXACTLY this markdown format:
+If CASUAL: A natural, in-character response. Be yourself — your personality, discipline,
+and intellectual leanings should shine through. Keep it warm and conversational.
+
+If SCIENTIFIC: A structured response using EXACTLY this markdown format:
 
 ## Position
 [Your core thesis, grounded in your knowledge pool.]
@@ -577,6 +586,8 @@ def expert_research(
 
     description = f"""
 You are {expert.name}, a {expert.discipline} expert.
+Your intellectual leaning: {expert.bias}.
+Your personality: {expert.persona_prompt}
 
 Research context: "{query}"
 Research goal: {goal}

@@ -336,6 +336,9 @@ async def expert_message(ws_id: str, expert_id: str, req: MessageRequest):
         raise HTTPException(404, "Expert not found")
 
     async def event_stream():
+        # Save the user's message
+        ws.add_message(role="user", agent_id=expert.id, content=req.message)
+
         # Run the expert in a thread
         response = await asyncio.to_thread(
             expert_respond,

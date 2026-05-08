@@ -39,6 +39,7 @@
     <div id="input-bar" style="display:none">
       <input type="text" id="msg-input" placeholder="Ask a question or @mention an expert…" onkeydown="handleInputKey(event)">
       <button onclick="sendMessage()" id="send-btn">Send</button>
+      <button onclick="cancelGeneration()" id="stop-btn" style="display:none;background:var(--terracotta);">Stop</button>
     </div>
   </main>
 

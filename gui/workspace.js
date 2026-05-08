@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function streamSSE(url, options, onEvent) {
   const resp = await fetch(url, options);
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -206,20 +207,41 @@ function renderConversationHeader(expert) {
   }
 }
 
+let _abortCtrl = null;  // AbortController for cancelling SSE streams
+
 function renderConversation(expert) {
   const conv = document.getElementById('conversation');
   if (!conv) return;
-  conv.innerHTML = `<div class="empty-state"><div class="empty-icon">📜</div>
-    <h2>${esc(expert.name)} awaits your inquiry</h2>
-    <p>Ask a question grounded in their discipline.</p></div>`;
+  conv.innerHTML = '';
+
+  // Load existing messages for this expert (direct conversations, not symposia)
+  const msgs = (_session?.messages || []).filter(
+    m => m.agent_id === expert.id && !m.symposium_id
+  );
+  if (msgs.length) {
+    msgs.forEach(m => {
+      const accent = _expertAccents[expert.id] || 'gold';
+      appendMessage(m.role, m.role==='user'?'You':(m.agent_name||expert.name), m.content, accent, m.turn);
+    });
+  } else {
+    conv.innerHTML = `<div class="empty-state"><div class="empty-icon">📜</div>
+      <h2>${esc(expert.name)} awaits your inquiry</h2>
+      <p>Ask a question grounded in their discipline.</p></div>`;
+  }
 }
 
 async function sendMessage() {
   const input = document.getElementById('msg-input');
   const msg = input.value.trim();
   if (!msg || !_activeExpert) return;
+  if (_abortCtrl) { _abortCtrl.abort(); _abortCtrl = null; }
+
   input.value = ''; input.disabled = true;
-  document.getElementById('send-btn').disabled = true;
+  const sendBtn = document.getElementById('send-btn');
+  sendBtn.disabled = true;
+  // Show stop button
+  const stopBtn = document.getElementById('stop-btn');
+  if (stopBtn) stopBtn.style.display = '';
 
   const conv = document.getElementById('conversation');
   const empty = conv.querySelector('.empty-state');
@@ -228,10 +250,11 @@ async function sendMessage() {
   const typing = appendTypingIndicator(_activeExpert.name);
   const tid = toast(`${_activeExpert.name} is thinking…`, 'loading');
 
+  _abortCtrl = new AbortController();
   try {
     await streamSSE(
       `${API}/sessions/${_sessionId}/experts/${_activeExpert.id}/message`,
-      { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg}) },
+      { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg}), signal: _abortCtrl.signal },
       (et, data) => {
         if (et === 'message') {
           if (typing) typing.remove();
@@ -241,8 +264,25 @@ async function sendMessage() {
         }
       }
     );
-  } catch(e) { if (typing) typing.remove(); dismissToast(tid); appendMessage('system', '', `Error: ${e.message}`); toast('Failed', 'error'); }
-  input.disabled = false; document.getElementById('send-btn').disabled = false; input.focus();
+  } catch(e) {
+    if (typing) typing.remove(); dismissToast(tid);
+    if (e.name === 'AbortError') {
+      toast('Generation stopped', 'info');
+    } else {
+      appendMessage('system', '', `Error: ${e.message}`);
+      toast('Failed', 'error');
+    }
+  }
+  _abortCtrl = null;
+  input.disabled = false; sendBtn.disabled = false;
+  if (stopBtn) stopBtn.style.display = 'none';
+  input.focus();
+  // Reload session to get latest messages
+  loadSession(_sessionId);
+}
+
+function cancelGeneration() {
+  if (_abortCtrl) { _abortCtrl.abort(); _abortCtrl = null; }
 }
 
 function appendMessage(role, name, content, accentClass, turn) {
