@@ -1107,7 +1107,7 @@ function _renderLiveDebatePhase() {
                         <strong>${_esc(msg.name)}</strong>
                         <span>${_esc(msg.discipline || '')}</span>
                     </div>
-                    <div class="chat-bubble markdown-content">${marked.parse(msg.content)}</div>
+                    <div class="chat-bubble markdown-content${isAudit ? '' : ' structured'}">${marked.parse(isAudit ? msg.content : _preprocessStructuredMarkdown(msg.content))}</div>
                 </div>
             </div>`;
     }
@@ -1194,7 +1194,8 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
         header.innerHTML = `<strong>${_esc(msg.name)}</strong> <span>${_esc(msg.meta)}</span>`;
 
         const bubble = document.createElement('div');
-        bubble.className = 'chat-bubble markdown-content';
+        const isStructuredReview = !msg.isAudit;
+        bubble.className = 'chat-bubble markdown-content' + (isStructuredReview ? ' structured' : '');
 
         if (msg.isDiscussant) {
             const approved = /\"approved\":\s*true/i.test(msg.content) || /\bAPPROVED\b/i.test(msg.content);
@@ -1229,12 +1230,18 @@ async function _animateTranscript(text, animId, chatContainer, roundIndex) {
 // ─── Phase D: Evidence Scorecard ─────────────────────────────────────────────
 
 async function renderScorecardPhase() {
-    // Live mode: show Courtroom Drama animation
+    // Live mode: show Rapporteur synthesis if available
     if (_liveSSE) {
-        const auditMsgs = _liveDebateMessages.filter(m =>
-            m.name === 'Rapporteur' || m.name === 'Discussant'
-        );
-        _renderCourtroom(auditMsgs);
+        const auditMsgs = _liveDebateMessages.filter(m => m.name === 'Rapporteur');
+        if (auditMsgs.length) {
+            _renderSynthesisPanel(auditMsgs);
+        } else {
+            contentBody.innerHTML = `
+                <div style="text-align:center;padding:60px 0;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top:20px;color:var(--text-muted);">Waiting for synthesis…</p>
+                </div>`;
+        }
         return;
     }
 
@@ -1250,62 +1257,110 @@ async function renderScorecardPhase() {
         return;
     }
 
-    const text = await fetchText(outputUrl(lastRound.scorecard));
-    const entryRegex = /^•\s+\[([^\]]+)\]\s+"([^"]+)"\s+→\s+(\S+)(?:\s+\[(.+?)\])?/;
-    const entries = text.split('\n')
-        .map(l => l.match(entryRegex))
-        .filter(Boolean)
-        .map(m => ({
-            name: m[1],
-            claim: m[2],
-            url: m[3],
-            status: m[4] || '',  // e.g. "✓ verified", "⚠ misattributed", "⚠ unverifiable"
-        }));
+    let entries;
+    try {
+        const text = await fetchText(outputUrl(lastRound.scorecard));
+        entries = JSON.parse(text);
+    } catch (_) {
+        contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">Could not parse scorecard data.</p>';
+        return;
+    }
 
-    if (!entries.length) {
+    if (!entries || !entries.length) {
         contentBody.innerHTML = '<p style="padding:20px;color:var(--text-muted)">No evidence entries found.</p>';
         return;
     }
 
-    const experts = [...new Set(entries.map(e => e.name))];
+    const experts = [...new Set(entries.map(e => e.agent_name))];
+
+    function claimTypeBadge(entry) {
+        const ct = entry.claim_type || 'empirical';
+        switch (ct) {
+            case 'position':
+                return '<span class="claim-type-badge badge-position">Thesis statement</span>';
+            case 'inference':
+                return '<span class="claim-type-badge badge-inference">Expert reasoning</span>';
+            default:
+                return '';
+        }
+    }
+
+    function sourceBadge(entry) {
+        const ct = entry.claim_type || 'empirical';
+        // Non-empirical claims: neutral badge
+        if (ct === 'position' || ct === 'inference') {
+            return '';
+        }
+        // Empirical claim with no source
+        if (!entry.source_url) {
+            return '<span class="claim-source-badge badge-no-source">No source cited</span>';
+        }
+        // Has source — check verification
+        switch (entry.verification_status) {
+            case 'verified':
+                return '<span class="claim-source-badge badge-verified">✓ Verified</span>';
+            case 'misattributed':
+                return '<span class="claim-source-badge badge-misattributed">⚠ Misattributed</span>';
+            case 'unverifiable':
+                return '<span class="claim-source-badge badge-unverifiable">? Unverifiable</span>';
+            default:
+                return '';
+        }
+    }
 
     function buildGrid(filter) {
-        return (filter === 'all' ? entries : entries.filter(e => e.name === filter))
+        return (filter === 'all' ? entries : entries.filter(e => e.agent_name === filter))
             .map((e, i) => {
-                const meta   = claimColorMeta(e.name);
-                const isUncited = e.url === 'UNCITED' || e.url.startsWith('⚠');
-                const isUnverifiable = e.status.includes('unverifiable') || e.status.includes('misattributed');
-                const isVerified = e.status.includes('verified');
+                const meta = claimColorMeta(e.agent_name);
+                const ctBadge = claimTypeBadge(e);
+                const srcBadge = sourceBadge(e);
+                const hasUrl = e.source_url && e.source_url.startsWith('http');
 
-                let sourceHtml;
-                if (isUncited) {
-                    sourceHtml = `<span class="claim-source claim-uncited">⚠ UNCITED — no verifiable source found</span>`;
-                } else if (isUnverifiable) {
-                    sourceHtml = `<span class="claim-source claim-warning">⚠ ${_esc(e.status)}</span>`;
-                } else if (isVerified) {
-                    const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
-                    sourceHtml = `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
-                        ✓ View Source → <span class="claim-domain">${_esc(domain)}</span>
-                    </a>`;
-                } else {
-                    const domain = (() => { try { return new URL(e.url).hostname; } catch { return e.url; } })();
-                    sourceHtml = `<a class="claim-source" href="${_esc(e.url)}" target="_blank" rel="noopener">
-                        View Source → <span class="claim-domain">${_esc(domain)}</span>
-                    </a>`;
+                let sourceHtml = '';
+                if (hasUrl) {
+                    const domain = (() => { try { return new URL(e.source_url).hostname; } catch { return e.source_url; } })();
+                    sourceHtml = `<a class="claim-source-link" href="${_esc(e.source_url)}" target="_blank" rel="noopener">
+                        → ${_esc(domain)}</a>`;
                 }
 
-                const cardClass = isUncited ? 'claim-uncited-card' : (isUnverifiable ? 'claim-warning-card' : '');
+                let quoteHtml = '';
+                if (e.source_quote) {
+                    quoteHtml = `<blockquote class="claim-quote">${_esc(e.source_quote)}</blockquote>`;
+                }
+
+                let noteHtml = '';
+                if (e.relevance_note) {
+                    noteHtml = `<span class="claim-note">${_esc(e.relevance_note)}</span>`;
+                }
+
+                const badges = [ctBadge, srcBadge].filter(Boolean).join('');
+
                 return `
-                    <div class="claim-card ${meta.cls} ${cardClass}" id="claim-${i}">
-                        <div class="claim-expert-chip">${_esc(e.name)}</div>
+                    <div class="claim-card ${meta.cls}" id="claim-${i}">
+                        <div class="claim-card-header">
+                            <div class="claim-expert-chip">${_esc(e.agent_name)}</div>
+                            <div class="claim-badges">${badges}</div>
+                        </div>
                         <p class="claim-text">"${_esc(e.claim)}"</p>
-                        ${sourceHtml}
+                        ${quoteHtml}
+                        <div class="claim-card-footer">
+                            ${sourceHtml}
+                            ${noteHtml}
+                        </div>
                     </div>`;
             }).join('');
     }
 
+    const verifiedCount = entries.filter(e => e.verification_status === 'verified').length;
+    const issueCount = entries.filter(e => e.verification_status === 'misattributed' || (!e.source_url && e.claim_type === 'empirical')).length;
+
     contentBody.innerHTML = `
         <div class="scorecard-wrapper">
+            <div class="scorecard-summary">
+                <span class="sc-stat sc-verified">✓ ${verifiedCount} verified</span>
+                <span class="sc-stat sc-total">${entries.length} total</span>
+                ${issueCount > 0 ? `<span class="sc-stat sc-issues">${issueCount} need attention</span>` : ''}
+            </div>
             <div class="scorecard-toolbar">
                 <div class="scorecard-filters" id="sc-filters">
                     <button class="sc-filter-btn active" onclick="setScorecardFilter('all',this)">
@@ -1313,10 +1368,9 @@ async function renderScorecardPhase() {
                     </button>
                     ${experts.map(n => `
                         <button class="sc-filter-btn" data-filter="${_esc(n)}" onclick="setScorecardFilter(this.dataset.filter,this)">
-                            ${_esc(n)} <span class="sc-count">${entries.filter(e=>e.name===n).length}</span>
+                            ${_esc(n)} <span class="sc-count">${entries.filter(e=>e.agent_name===n).length}</span>
                         </button>`).join('')}
                 </div>
-                <span class="sc-total-label">${entries.length} citations verified</span>
             </div>
             <div class="scorecard-grid" id="scorecard-grid">${buildGrid('all')}</div>
         </div>`;
@@ -1326,6 +1380,24 @@ async function renderScorecardPhase() {
         btn.classList.add('active');
         document.getElementById('scorecard-grid').innerHTML = buildGrid(filter);
     };
+}
+
+// ── Synthesis Panel (Phase D, live mode) ─────────────────────────────────────
+
+function _renderSynthesisPanel(auditMsgs) {
+    if (!auditMsgs.length) return;
+    const synthesis = auditMsgs[auditMsgs.length - 1];
+
+    contentBody.innerHTML = `
+        <div class="synthesis-panel">
+            <div class="synthesis-header">
+                <h2>📋 Rapporteur Synthesis</h2>
+                <span class="synthesis-round">Round ${synthesis.round || 1}</span>
+            </div>
+            <div class="synthesis-body markdown-content">
+                ${marked.parse(synthesis.content)}
+            </div>
+        </div>`;
 }
 
 // ── Courtroom Drama (Phase D) ───────────────────────────────────────────────
@@ -2061,15 +2133,23 @@ function _renderDebateTyping(data) {
     div.id = 'typing-indicator';
     div.className = 'chat-indicator';
     const isAudit = data.name === 'Rapporteur' || data.name === 'Discussant';
-    if (isAudit && data.discipline === 'Audit Loop') {
-        div.innerHTML = `<strong>Audit Loop</strong> is evaluating the synthesis<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
-    } else if (isAudit) {
+    if (isAudit) {
         div.innerHTML = `<strong>${_esc(data.name)}</strong> is drafting<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
     } else {
         div.innerHTML = `<strong>${_esc(data.name)}</strong> is formulating<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
     }
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
+}
+
+function _preprocessStructuredMarkdown(md) {
+    // Convert **Keywords:** chip1, chip2, chip3 into HTML chip tags
+    return md.replace(/\*\*Keywords:\*\*\s*(.+?)(?:\n|$)/, (_, keywords) => {
+        const chips = keywords.split(',').map(k =>
+            `<span class="keyword-chip">${_esc(k.trim())}</span>`
+        ).join('');
+        return `<div class="keyword-row">${chips}</div>`;
+    });
 }
 
 function _renderDebateMessage(data) {
@@ -2086,7 +2166,7 @@ function _renderDebateMessage(data) {
     const avatar = document.createElement('div');
     avatar.className = 'chat-avatar';
     avatar.textContent = isAudit
-        ? (data.name === 'Rapporteur' ? '⚖' : '🔬')
+        ? (data.name === 'Rapporteur' ? '📋' : '🔬')
         : data.name.replace(/^(Dr\.|Prof\.) /, '').substring(0, 1);
 
     const bubbleWrap = document.createElement('div');
@@ -2094,11 +2174,15 @@ function _renderDebateMessage(data) {
 
     const header = document.createElement('div');
     header.className = 'chat-header';
-    header.innerHTML = `<strong>${_esc(data.name)}</strong> <span>${isAudit ? 'Round ' + _liveCurrentRound : _esc(data.discipline || '')}</span>`;
+    const roleLabel = isAudit
+        ? (data.name === 'Rapporteur' ? 'Synthesis' : data.discipline || '')
+        : data.discipline || '';
+    header.innerHTML = `<strong>${_esc(data.name)}</strong> <span>${isAudit ? 'Round ' + _liveCurrentRound : _esc(roleLabel)}</span>`;
 
     const bubble = document.createElement('div');
-    bubble.className = 'chat-bubble markdown-content';
-    bubble.innerHTML = marked.parse(data.content);
+    const isStructured = !isAudit;
+    bubble.className = 'chat-bubble markdown-content' + (isStructured ? ' structured' : '');
+    bubble.innerHTML = marked.parse(isStructured ? _preprocessStructuredMarkdown(data.content) : data.content);
 
     bubbleWrap.append(header, bubble);
     isAudit ? wrapper.append(bubbleWrap, avatar) : wrapper.append(avatar, bubbleWrap);

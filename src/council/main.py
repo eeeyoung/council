@@ -400,10 +400,9 @@ def main() -> None:
                     f.write(f"# Phase C Debate Transcript (Session {state.session_id} - Round {state.audit_round})\n\n")
                     f.write(state.transcript_text)
                     
-                scorecard_file = out_dir / f"{state.session_id}_scorecard_r{state.audit_round}.md"
+                scorecard_file = out_dir / f"{state.session_id}_scorecard_r{state.audit_round}.json"
                 with open(scorecard_file, "w", encoding="utf-8") as f:
-                    f.write(f"# Phase C Evidence Scorecard (Session {state.session_id} - Round {state.audit_round})\n\n")
-                    f.write(state.evidence_scorecard_text)
+                    f.write(state.evidence_scorecard_json)
 
                 console.print(f"[bold green]✓ Saved transcript:[/bold green] [cyan]{transcript_file}[/cyan]")
                 console.print(f"[bold green]✓ Saved scorecard:[/bold green] [cyan]{scorecard_file}[/cyan]")
@@ -437,7 +436,7 @@ def main() -> None:
     except ImportError:
         _phase_e_available = False
 
-    if _phase_e_available and state.status == "dossier":
+    if _phase_e_available and state.status == "compiling":
         state = run_dossier(state, console=console, verbose=args.verbose)
         save_state(state)
 
@@ -449,7 +448,7 @@ def main() -> None:
         _write_manifest(state, out_dir)
         console.print(Rule("[bold blue]Phase E Complete[/bold blue]", style="blue"))
         console.print()
-    elif state.status == "dossier":
+    elif state.status == "compiling":
         console.print("[dim]Phase E (dossier_crew) not yet available.[/dim]\n")
 
     # ------------------------------------------------------------------ #
@@ -507,8 +506,8 @@ def _print_session_summary(state: "CouncilState", out_dir: Path) -> None:
     table.add_row(
         "D",
         "Audit Loop",
-        _done(state.status in ("dossier", "done")),
-        f"APPROVED after round {state.audit_round}" if state.status in ("dossier", "done") else f"Round {state.audit_round}",
+        _done(state.status in ("compiling", "done")),
+        f"APPROVED after round {state.audit_round}" if state.status in ("compiling", "done") else f"Round {state.audit_round}",
     )
 
     dossier_path = out_dir / f"{state.session_id}_dossier.md"

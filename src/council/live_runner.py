@@ -155,20 +155,18 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
                         f"# Phase C Debate Transcript (Round {round_num})\n\n"
                         f"Session: {session_id}\nQuery: {query}\n\n"
                         f"{state.transcript_text}")
-            _write_file(f"{session_id}_scorecard_r{r}.md",
-                        f"# Phase C Evidence Scorecard (Session {session_id} - Round {round_num})\n\n"
-                        f"{state.evidence_scorecard_text}")
+            _write_file(f"{session_id}_scorecard_r{r}.json",
+                        f"{state.evidence_scorecard_json}")
 
             yield "scorecard_ready", {"round": r}
 
         if state.status == "auditing":
-            # Signal the GUI that Phase D (Courtroom) has begun
             yield "phase_start", {"phase": "D"}
             await asyncio.sleep(0.2)
 
             yield "debate_typing", {
                 "name": "Rapporteur",
-                "discipline": "Audit Loop",
+                "discipline": "Synthesis",
                 "round": state.audit_round + 1,
             }
             await asyncio.sleep(0.3)
@@ -177,7 +175,7 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
             state = await asyncio.to_thread(run_audit_loop, state, None, False)
             save_state(state)
 
-            # Emit audit-phase messages (Rapporteur, Discussant) in real-time
+            # Emit Rapporteur synthesis message
             for entry in state.transcript[prev_len:]:
                 if entry.phase == "audit":
                     yield "debate_typing", {
@@ -195,25 +193,17 @@ async def run_live_session(state: CouncilState) -> AsyncIterator[tuple[str, dict
                     }
                     await asyncio.sleep(0.5)
 
-            if state.audit_history:
-                latest = state.audit_history[-1]
-                if state.synthesis:
-                    _write_file(f"{session_id}_consensus_r{state.audit_round}.md",
-                                state.synthesis)
-                yield "audit_result", {
-                    "round": latest.round,
-                    "approved": latest.approved,
-                    "verdict": latest.verdict,
-                    "issues": latest.issues,
-                    "mandate": latest.conflict_mandate or "",
-                }
+            # Write consensus file
+            if state.synthesis:
+                _write_file(f"{session_id}_consensus_r{state.audit_round}.md",
+                            state.synthesis)
 
-                # Emit expectation evaluation if available
-                if state.expectation_met is not None:
-                    yield "expectation_result", {
-                        "met": state.expectation_met,
-                        "mandate": state.expectation_mandate or "",
-                    }
+            # Emit expectation evaluation if available
+            if state.expectation_met is not None:
+                yield "expectation_result", {
+                    "met": state.expectation_met,
+                    "mandate": state.expectation_mandate or "",
+                }
 
         _write_manifest(state, OUT_DIR)
 

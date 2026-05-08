@@ -47,7 +47,7 @@ def write_manifest(state, out_dir: Path) -> None:
     rounds: list[dict] = []
     for r in range(state.max_audit_rounds + 2):
         t = out_dir / f"{state.session_id}_transcript_r{r}.md"
-        s = out_dir / f"{state.session_id}_scorecard_r{r}.md"
+        s = out_dir / f"{state.session_id}_scorecard_r{r}.json"
         c = out_dir / f"{state.session_id}_consensus_r{r}.md"
         if t.exists() or s.exists():
             rounds.append({
@@ -60,7 +60,7 @@ def write_manifest(state, out_dir: Path) -> None:
     # Legacy fallback: single-file transcript/scorecard without round suffix
     if not rounds:
         t = out_dir / f"{state.session_id}_transcript.md"
-        s = out_dir / f"{state.session_id}_scorecard.md"
+        s = out_dir / f"{state.session_id}_scorecard.json"
         if t.exists() or s.exists():
             rounds.append({
                 "round": 0,
@@ -101,6 +101,7 @@ def write_manifest(state, out_dir: Path) -> None:
             "dossier": dossier.name if dossier.exists() else None,
         },
         "phases_complete": phases_complete,
+        "expectation_met": state.expectation_met,
     }
 
     out_dir.mkdir(exist_ok=True)

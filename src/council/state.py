@@ -44,8 +44,9 @@ class EvidenceEntry(BaseModel):
 
     claim: str
     agent_name: str
-    source_url: str  # "UNCITED" if no match found
-    verification_status: str = ""  # "verified", "misattributed", "unverifiable", or ""
+    claim_type: str = "empirical"  # "empirical" (from ## Evidence), "inference" (## Response to Peers), "position" (## Position)
+    source_url: str = ""  # empty for non-empirical claims where no source is needed
+    verification_status: str = ""  # "verified", "misattributed", "unverifiable", "no_source", or ""
     source_quote: str = ""
     relevance_note: Optional[str] = None
 
@@ -149,18 +150,30 @@ class CouncilState(BaseModel):
             return "(Evidence scorecard not yet compiled.)"
         lines: list[str] = []
         for e in self.evidence_scorecard:
-            if e.source_url == "UNCITED":
-                cited = "⚠ UNCITED"
+            if e.claim_type in ("inference", "position"):
+                tag = f"[{e.claim_type}]"
+            elif e.source_url == "":
+                tag = "[no_source]"
             elif e.verification_status == "verified":
-                cited = f"{e.source_url} [✓ verified]"
+                tag = f"[✓ verified] {e.source_url}"
             elif e.verification_status == "misattributed":
-                cited = f"{e.source_url} [⚠ misattributed]"
+                tag = f"[⚠ misattributed] {e.source_url}"
             elif e.verification_status == "unverifiable":
-                cited = f"{e.source_url} [⚠ unverifiable]"
+                tag = f"[⚠ unverifiable] {e.source_url}"
             else:
-                cited = e.source_url
-            lines.append(f"• [{e.agent_name}] \"{e.claim}\" → {cited}")
+                tag = e.source_url
+            quote_snippet = f' — "{e.source_quote[:100]}..."' if e.source_quote else ""
+            lines.append(f"• [{e.agent_name}] {tag}\n  \"{e.claim}\"{quote_snippet}")
         return "\n".join(lines)
+
+    @property
+    def evidence_scorecard_json(self) -> str:
+        """Render evidence scorecard as JSON for the GUI."""
+        import json
+        return json.dumps(
+            [e.model_dump() for e in self.evidence_scorecard],
+            ensure_ascii=False,
+        )
 
     @property
     def next_turn_number(self) -> int:

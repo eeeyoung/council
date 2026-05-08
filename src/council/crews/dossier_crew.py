@@ -3,7 +3,7 @@ council/crews/dossier_crew.py
 
 Phase E: Final Dossier Compilation.
 
-Runs after the audit loop approves (state.status == "dossier").
+Runs after the audit loop approves (state.status == "compiling").
 The Fact-Checker maps claims to citations, then the Dossier Author compiles
 the full publication-ready Markdown dossier.
 """
@@ -41,7 +41,7 @@ def run_dossier(
     if console is None:
         console = Console()
 
-    if state.status != "dossier":
+    if state.status != "compiling":
         raise ValueError(f"Cannot run dossier compilation from state: {state.status}")
 
     console.print("\n[bold blue]⟳  Phase E: Compiling Final Dossier…[/bold blue]\n")

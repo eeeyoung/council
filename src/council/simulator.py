@@ -163,7 +163,7 @@ async def simulate_session(
                 yield "scorecard_ready", {"round": round_num, "file": round_info["scorecard"]}
 
             if round_info.get("consensus"):
-                # Infer approved: if this is the last round with a consensus, it was approved
+                # Infer approval: approved if no further rounds with a transcript
                 all_rounds = files.get("rounds", [])
                 has_next_round = any(
                     r["round"] == round_num + 1 for r in all_rounds
@@ -177,6 +177,13 @@ async def simulate_session(
                     "mandate":  "",
                     "file":     round_info["consensus"],
                 }
+
+        # Emit expectation evaluation result if present in manifest
+        if "expectation_met" in manifest and manifest["expectation_met"] is not None:
+            yield "expectation_result", {
+                "met": manifest["expectation_met"],
+                "mandate": "",
+            }
 
         yield "phase_complete", {"phase": "C"}
 

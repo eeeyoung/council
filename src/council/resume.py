@@ -80,29 +80,30 @@ def _parse_transcript(transcript_path: Path, expert_names: set[str]) -> list[Tra
 
 
 def _parse_scorecard(scorecard_path: Path) -> list[EvidenceEntry]:
+    """Parse a JSON evidence scorecard file into EvidenceEntry objects."""
+    import json
+
     text = scorecard_path.read_text(encoding="utf-8")
-
-    entries: list[EvidenceEntry] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("•"):
-            continue
-
-        match = re.match(
-            r"•\s+\[(.+?)\]\s+\"(.+?)\"\s+→\s+(.+)", line
-        )
-        if match:
-            agent_name = match.group(1).strip()
-            claim = match.group(2).strip()
-            source_url = match.group(3).strip()
+    try:
+        data = json.loads(text)
+        if not isinstance(data, list):
+            return []
+        entries: list[EvidenceEntry] = []
+        for item in data:
             entries.append(
                 EvidenceEntry(
-                    claim=claim,
-                    agent_name=agent_name,
-                    source_url=source_url,
+                    claim=item.get("claim", ""),
+                    agent_name=item.get("agent_name", ""),
+                    claim_type=item.get("claim_type", "empirical"),
+                    source_url=item.get("source_url", ""),
+                    verification_status=item.get("verification_status", ""),
+                    source_quote=item.get("source_quote", ""),
+                    relevance_note=item.get("relevance_note"),
                 )
             )
-    return entries
+        return entries
+    except Exception:
+        return []
 
 
 def load_session_from_outputs(
@@ -117,7 +118,7 @@ def load_session_from_outputs(
       - {session_id}_panel.json
       - {session_id}_research_dr_*.md (one per expert)
       - {session_id}_transcript_r0.md
-      - {session_id}_scorecard_r0.md
+      - {session_id}_scorecard_r0.json
 
     Sets status to "auditing" so it can immediately enter Phase D.
     """
@@ -137,7 +138,7 @@ def load_session_from_outputs(
     if transcript_file.exists():
         transcript = _parse_transcript(transcript_file, expert_names)
 
-    scorecard_file = out / f"{session_id}_scorecard_r0.md"
+    scorecard_file = out / f"{session_id}_scorecard_r0.json"
     evidence_scorecard: list[EvidenceEntry] = []
     if scorecard_file.exists():
         evidence_scorecard = _parse_scorecard(scorecard_file)

@@ -65,13 +65,36 @@ Some synthesis text.
 """
     (out / f"{session_id}_transcript_r0.md").write_text(transcript, encoding="utf-8")
 
-    scorecard = """# Phase C Evidence Scorecard (Session abc12345 - Round 0)
-
-• [Dr. Alice Chen] "Quantum mechanics governs this" → https://example.com/quantum
-• [Dr. Bob Smith] "Data shows otherwise" → ⚠ UNCITED
-• [Dr. Alice Chen] "Second claim by Alice" → https://example.com/second
-"""
-    (out / f"{session_id}_scorecard_r0.md").write_text(scorecard, encoding="utf-8")
+    scorecard = json.dumps([
+        {
+            "claim": "Quantum mechanics governs this",
+            "agent_name": "Dr. Alice Chen",
+            "claim_type": "empirical",
+            "source_url": "https://example.com/quantum",
+            "verification_status": "verified",
+            "source_quote": "Quantum mechanics governs this behavior.",
+            "relevance_note": None,
+        },
+        {
+            "claim": "Data shows otherwise",
+            "agent_name": "Dr. Bob Smith",
+            "claim_type": "empirical",
+            "source_url": "",
+            "verification_status": "",
+            "source_quote": "",
+            "relevance_note": None,
+        },
+        {
+            "claim": "Second claim by Alice",
+            "agent_name": "Dr. Alice Chen",
+            "claim_type": "inference",
+            "source_url": "",
+            "verification_status": "",
+            "source_quote": "",
+            "relevance_note": "Expert synthesis",
+        },
+    ])
+    (out / f"{session_id}_scorecard_r0.json").write_text(scorecard, encoding="utf-8")
 
     return out
 
@@ -98,7 +121,11 @@ def test_load_session_from_outputs(mock_outputs_dir: Path):
     assert len(state.evidence_scorecard) == 3
     assert state.evidence_scorecard[0].claim == "Quantum mechanics governs this"
     assert state.evidence_scorecard[0].source_url == "https://example.com/quantum"
-    assert state.evidence_scorecard[1].source_url == "⚠ UNCITED"
+    assert state.evidence_scorecard[0].verification_status == "verified"
+    assert state.evidence_scorecard[0].source_quote == "Quantum mechanics governs this behavior."
+    assert state.evidence_scorecard[1].source_url == ""
+    assert state.evidence_scorecard[1].verification_status == ""
+    assert state.evidence_scorecard[2].claim_type == "inference"
 
 
 def test_resume_and_save(mock_outputs_dir: Path, monkeypatch, tmp_path):
@@ -122,7 +149,7 @@ def test_missing_panel_raises(tmp_path: Path):
 
 def test_empty_scorecard_and_transcript_handled(mock_outputs_dir: Path):
     (mock_outputs_dir / "abc12345_transcript_r0.md").unlink()
-    (mock_outputs_dir / "abc12345_scorecard_r0.md").unlink()
+    (mock_outputs_dir / "abc12345_scorecard_r0.json").unlink()
 
     state = load_session_from_outputs("abc12345", str(mock_outputs_dir))
     assert state.status == "auditing"

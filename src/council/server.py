@@ -101,7 +101,7 @@ def _build_manifest(session_id: str) -> dict | None:
     rounds = []
     for r in range(10):
         t = OUTPUTS_DIR / f"{session_id}_transcript_r{r}.md"
-        s = OUTPUTS_DIR / f"{session_id}_scorecard_r{r}.md"
+        s = OUTPUTS_DIR / f"{session_id}_scorecard_r{r}.json"
         c = OUTPUTS_DIR / f"{session_id}_consensus_r{r}.md"
         if t.exists() or s.exists():
             rounds.append({
@@ -113,7 +113,7 @@ def _build_manifest(session_id: str) -> dict | None:
 
     if not rounds:  # legacy single-file format
         t = OUTPUTS_DIR / f"{session_id}_transcript.md"
-        s = OUTPUTS_DIR / f"{session_id}_scorecard.md"
+        s = OUTPUTS_DIR / f"{session_id}_scorecard.json"
         if t.exists() or s.exists():
             rounds.append({
                 "round":     0,
