@@ -169,6 +169,19 @@ def get_workspace(ws_id: str):
             }
             for s in ws.symposia
         ],
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "agent_id": m.agent_id,
+                "agent_name": m.agent_name,
+                "symposium_id": m.symposium_id,
+                "content": m.content,
+                "turn": m.turn,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+            }
+            for m in ws.messages
+        ],
         "created_at": ws.created_at.isoformat() if ws.created_at else None,
     }
 
