@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>COUNCIL — The Academy</title>
+<link rel="stylesheet" href="/gui/workspace.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+<div id="app-shell">
+  <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>COUNCIL <span>✦</span></h1>
+      <div class="sidebar-ws-name" id="sidebar-ws-name">Select a workspace</div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Panels</div>
+      <div id="sidebar-panels"></div>
+      <button class="sidebar-btn" onclick="showNewPanelModal()">+ New Panel</button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Symposia</div>
+      <div id="sidebar-symposia">
+        <span style="font-size:12px;color:var(--text-dim)">No symposia yet</span>
+      </div>
+    </div>
+    <div class="sidebar-section" style="margin-top:auto;">
+      <button class="sidebar-btn" onclick="showWorkspaceList()">← Workspaces</button>
+    </div>
+  </aside>
+
+  <!-- ── Main Panel ───────────────────────────────────────────────────── -->
+  <main id="main-panel">
+    <div id="main-content">
+      <!-- Empty state or conversation -->
+    </div>
+    <div id="input-bar" style="display:none">
+      <input type="text" id="msg-input" placeholder="Ask a question or @mention an expert…" onkeydown="handleInputKey(event)">
+      <button onclick="sendMessage()" id="send-btn">Send</button>
+    </div>
+  </main>
+
+  <!-- ── Context Panel ─────────────────────────────────────────────────── -->
+  <aside id="context-panel" class="collapsed">
+    <div class="context-tabs">
+      <button class="context-tab active" onclick="switchContextTab('evidence',this)">Evidence</button>
+      <button class="context-tab" onclick="switchContextTab('sources',this)">Sources</button>
+      <button class="context-tab" onclick="switchContextTab('synthesis',this)">Synthesis</button>
+    </div>
+    <div class="context-content" id="context-content">
+      <p style="font-size:12px;color:var(--text-dim)">Select an expert or symposium to see context.</p>
+    </div>
+  </aside>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- Modal overlay -->
+<div id="modal-overlay" class="modal-overlay" style="display:none"></div>
+
+<script src="/gui/avatars.js"></script>
+<script src="/gui/workspace.js"></script>
+</body>
+</html>

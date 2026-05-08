@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from council.workspace.agents import (
@@ -38,6 +38,8 @@ from council.workspace.sse import (
 )
 from council.workspace.state import Message, Panel, Symposium, WorkspaceState
 
+GUI_DIR = Path(__file__).resolve().parents[3] / "gui"
+
 app = FastAPI(title="COUNCIL Workspace API")
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +50,13 @@ app.add_middleware(
 
 OUTPUTS_DIR = Path("outputs")
 OUTPUTS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/workspace")
+def serve_workspace():
+    return FileResponse(GUI_DIR / "workspace.html")
+
+
 
 
 def _load_or_404(ws_id: str) -> WorkspaceState:
@@ -560,6 +569,27 @@ def export_workspace(ws_id: str):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "system": "workspace"}
+
+
+# ── GUI static files ─────────────────────────────────────────────────────────
+
+
+@app.get("/")
+def serve_root():
+    return FileResponse(GUI_DIR / "workspace.html")
+
+
+@app.get("/workspace")
+def serve_workspace_page():
+    return FileResponse(GUI_DIR / "workspace.html")
+
+
+@app.get("/gui/{filename}")
+def serve_gui_file(filename: str):
+    path = GUI_DIR / filename
+    if path.suffix in (".html", ".css", ".js") and path.exists():
+        return FileResponse(path)
+    raise HTTPException(404)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
