@@ -34,4 +34,5 @@ council.db
 
 # OS
 .DS_Store
-Thumbs.dbworkspace.db
+Thumbs.db
+workspace.db
