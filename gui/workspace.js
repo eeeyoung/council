@@ -226,14 +226,22 @@ async function sendMessage() {
   if (empty) empty.remove();
   appendMessage('user', 'You', msg);
   const typing = appendTypingIndicator(_activeExpert.name);
+  const tid = toast(`${_activeExpert.name} is thinking…`, 'loading');
 
   try {
     await streamSSE(
       `${API}/sessions/${_sessionId}/experts/${_activeExpert.id}/message`,
       { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg}) },
-      (et, data) => { if (et === 'message') { if (typing) typing.remove(); appendMessage('agent', data.name, data.content, _expertAccents[_activeExpert?.id] || 'gold', data.turn); } }
+      (et, data) => {
+        if (et === 'message') {
+          if (typing) typing.remove();
+          dismissToast(tid);
+          appendMessage('agent', data.name, data.content, _expertAccents[_activeExpert?.id] || 'gold', data.turn);
+          toast(`${data.name} responded`, 'success');
+        }
+      }
     );
-  } catch(e) { if (typing) typing.remove(); appendMessage('system', '', `Error: ${e.message}`); }
+  } catch(e) { if (typing) typing.remove(); dismissToast(tid); appendMessage('system', '', `Error: ${e.message}`); toast('Failed', 'error'); }
   input.disabled = false; document.getElementById('send-btn').disabled = false; input.focus();
 }
 
@@ -477,17 +485,33 @@ async function runSymposiumRound() {
   if (empty) empty.remove();
   if (conv) conv.innerHTML = '';
   let ct = null;
+  let tid = toast('Symposium round starting…', 'loading');
   try {
     await streamSSE(
       `${API}/sessions/${_sessionId}/symposia/${_activeSymposium}/round`,
       { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' },
       (et, data) => {
-        if (et === 'typing') { if (ct) ct.remove(); ct = appendTypingIndicator(data.name); highlightSpeaker(data.name); }
-        else if (et === 'message') { if (ct) ct.remove(); ct = null; appendMessage('agent', data.name, data.content, _expertAccents[findExpertIdByName(data.name)]||'gold', data.turn); }
-        else if (et === 'round_complete') { toast(`Round complete — ${data.turns} turns`, 'success'); const sb = document.getElementById('btn-synthesize'); if (sb) sb.style.display = ''; }
+        if (et === 'typing') {
+          if (ct) ct.remove();
+          ct = appendTypingIndicator(data.name);
+          highlightSpeaker(data.name);
+          updateToast(tid, `${data.name} is speaking…`, 'loading');
+        } else if (et === 'message') {
+          if (ct) ct.remove(); ct = null;
+          appendMessage('agent', data.name, data.content, _expertAccents[findExpertIdByName(data.name)]||'gold', data.turn);
+        } else if (et === 'round_complete') {
+          dismissToast(tid);
+          toast(`Round complete — ${data.turns} turns`, 'success');
+          const sb = document.getElementById('btn-synthesize');
+          if (sb) sb.style.display = '';
+        }
       }
     );
-  } catch(e) { if (ct) ct.remove(); appendMessage('system', '', `Error: ${e.message}`); }
+  } catch(e) {
+    if (ct) ct.remove(); dismissToast(tid);
+    appendMessage('system', '', `Error: ${e.message}`);
+    toast('Round failed', 'error');
+  }
   if (btn) { btn.disabled = false; btn.textContent = '▶ Run Round'; }
   await loadSession(_sessionId);
 }
@@ -506,16 +530,22 @@ function findExpertIdByName(name) {
 
 async function synthesizeSymposium() {
   if (!_activeSymposium) return;
-  toast('Rapporteur is synthesizing…', 'success');
+  const tid = toast('Rapporteur is synthesizing…', 'loading');
   const btn = document.getElementById('btn-synthesize');
   if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
   try {
     await streamSSE(
       `${API}/sessions/${_sessionId}/symposia/${_activeSymposium}/synthesize`,
       { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' },
-      (et, data) => { if (et==='message') { appendMessage('agent','Rapporteur',data.content,'gold'); toast('Synthesis complete!','success'); } }
+      (et, data) => {
+        if (et==='message') {
+          dismissToast(tid);
+          appendMessage('agent','Rapporteur',data.content,'gold');
+          toast('Synthesis complete!','success');
+        }
+      }
     );
-  } catch(e) { toast('Failed: '+e.message,'error'); }
+  } catch(e) { dismissToast(tid); toast('Failed: '+e.message,'error'); }
   if (btn) { btn.disabled=false; btn.textContent='📋 Synthesize'; }
   await loadSession(_sessionId);
 }
@@ -576,10 +606,46 @@ function handleInputKey(e) { if (e.key==='Enter'&&!e.shiftKey) { e.preventDefaul
 
 function esc(s) { if (!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
+let _toastCounter = 0;
+
 function toast(msg, type) {
+  const id = `toast-${++_toastCounter}`;
   const c = document.getElementById('toasts');
   const el = document.createElement('div');
-  el.className = `toast ${type}`; el.textContent = msg;
+  el.id = id;
+  el.className = `toast ${type}`;
+
+  const icon = {loading:'⏳', success:'✓', error:'✗', info:'ℹ'}[type] || '';
+  const spinner = type === 'loading' ? '<span class="toast-spinner"></span>' : '';
+
+  el.innerHTML = `<span class="toast-icon">${spinner}${icon}</span>
+    <span class="toast-msg">${esc(msg)}</span>
+    <button class="toast-close" onclick="dismissToast('${id}')">×</button>`;
+
   c.appendChild(el);
-  setTimeout(()=>el.remove(), 3500);
+
+  // Only auto-dismiss success after 5s; loading/info/error persist
+  if (type === 'success') {
+    setTimeout(() => { if (document.getElementById(id)) el.remove(); }, 5000);
+  }
+
+  return id;
+}
+
+function dismissToast(id) {
+  const el = document.getElementById(id);
+  if (el) { el.style.animation = 'toastOut 0.2s ease forwards'; setTimeout(() => el.remove(), 200); }
+}
+
+function updateToast(id, msg, type) {
+  const el = document.getElementById(id);
+  if (!el) return toast(msg, type);
+  const icon = {loading:'⏳', success:'✓', error:'✗', info:'ℹ'}[type] || '';
+  const spinner = type === 'loading' ? '<span class="toast-spinner"></span>' : '';
+  el.className = `toast ${type}`;
+  el.querySelector('.toast-icon').innerHTML = spinner + icon;
+  el.querySelector('.toast-msg').textContent = msg;
+  if (type === 'success') {
+    setTimeout(() => { if (document.getElementById(id)) el.remove(); }, 5000);
+  }
 }
