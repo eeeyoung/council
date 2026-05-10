@@ -1,8 +1,5 @@
 /* ── COUNCIL Workspace — The Academy ───────────────────────────────────── */
 
-/* Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600&display=swap');
-
 /* ── Variables ─────────────────────────────────────────────────────────── */
 
 :root {
@@ -33,9 +30,9 @@
   --shadow:        0 2px 12px rgba(45,36,24,0.06);
   --shadow-hover:  0 4px 20px rgba(45,36,24,0.10);
 
-  --font-heading:  'Cormorant Garamond', 'Georgia', serif;
-  --font-body:     'Inter', -apple-system, sans-serif;
-  --font-mono:     'SF Mono', 'Fira Code', monospace;
+  --font-heading:  'Times New Roman', Times, serif;
+  --font-body:     'Times New Roman', Times, serif;
+  --font-mono:     'Courier New', monospace;
 
   --sidebar-w:     260px;
   --context-w:     320px;
