@@ -81,6 +81,7 @@ function _esc(str) {
 
 // ─── Phase switching ──────────────────────────────────────────────────────────
 async function switchPhase(phaseId) {
+    console.warn('[switchPhase] phaseId=' + phaseId + ' currentSession=' + !!currentSession + ' mode=' + window.SERVER_MODE);
     // Clean up all animation timers when switching phases
     if (_deliberationTimer) { clearInterval(_deliberationTimer); _deliberationTimer = null; }
     if (_shelvesTimer)     { clearInterval(_shelvesTimer);     _shelvesTimer = null; }
@@ -222,6 +223,10 @@ function startNewSession() {
     currentSession = null;
     _liveResearch = {};
     _liveDebateMessages = [];
+    try {
+        sessionStorage.removeItem('council_debate_session');
+        sessionStorage.removeItem('council_debate_messages');
+    } catch (_) {}
     _liveCurrentRound = 0;
     _liveDossier = '';
     _deliberationInProgress = false;
@@ -1036,13 +1041,32 @@ window.switchSubTab = function (index) {
 // ─── Phase C: The Live Symposium ──────────────────────────────────────────────
 
 async function renderDebatePhase() {
-    // Live mode: render from accumulated live debate messages
-    if (_liveDebateMessages.length > 0 || _liveSSE) {
+    // Check both in-memory and sessionStorage for persisted messages
+    let hasPersistedMessages = _liveDebateMessages.length > 0;
+    if (!hasPersistedMessages) {
+        try {
+            const storedSession = sessionStorage.getItem('council_debate_session');
+            const currentId = currentSession?.session_id || panelWizardState?.sessionId;
+            if (storedSession && currentId && storedSession === currentId) {
+                const saved = sessionStorage.getItem('council_debate_messages');
+                if (saved && JSON.parse(saved).length) hasPersistedMessages = true;
+            }
+        } catch (_) {}
+    }
+    console.log('[Phase C] renderDebatePhase. inMemory=', _liveDebateMessages.length,
+        'hasPersisted=', hasPersistedMessages, '_liveSSE=', !!_liveSSE,
+        'podiumInit=', _podiumInitialized);
+
+    // Live / persisted mode: render from accumulated debate messages
+    if (hasPersistedMessages || _liveSSE) {
+        console.log('[Phase C] Using LIVE render path');
         _renderLiveDebatePhase();
         return;
     }
 
     // Review mode: render from transcript files
+    console.log('[Phase C] Using REVIEW render path. rounds=',
+        currentSession?.files?.rounds?.length);
     const animId = currentAnimationId;
     const rounds = currentSession?.files?.rounds ?? [];
 
@@ -1051,7 +1075,8 @@ async function renderDebatePhase() {
         return;
     }
 
-    contentBody.innerHTML = `<div class="chat-container" id="chat-container"></div>`;
+    const podium = _renderPodium();
+    contentBody.innerHTML = podium + '<div class="chat-container" id="chat-container"></div>';
     const chatContainer = document.getElementById('chat-container');
 
     for (const roundInfo of rounds) {
@@ -1067,7 +1092,26 @@ async function renderDebatePhase() {
 }
 
 function _renderLiveDebatePhase() {
-    const msgs = _liveDebateMessages;
+    let msgs = _liveDebateMessages;
+    // If in-memory array is empty, try to restore from sessionStorage
+    if (!msgs.length) {
+        try {
+            const storedSession = sessionStorage.getItem('council_debate_session');
+            const currentId = currentSession?.session_id || panelWizardState?.sessionId;
+            // Only restore if the stored messages belong to the current session
+            if (storedSession && currentId && storedSession === currentId) {
+                const saved = sessionStorage.getItem('council_debate_messages');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.length) {
+                        _liveDebateMessages = parsed;
+                        msgs = _liveDebateMessages;
+                        console.log('[Phase C] Restored', msgs.length, 'messages from sessionStorage');
+                    }
+                }
+            }
+        } catch (_) {}
+    }
     if (!msgs.length) {
         contentBody.innerHTML = `
             <div style="text-align:center;padding:60px 0;">
@@ -1849,10 +1893,16 @@ async function renderDossierPhase() {
 
 // ─── Live SSE connection ──────────────────────────────────────────────────────
 
-function _connectLiveSSE(sessionId) {
-    // Initialize live data stores
+function _connectLiveSSE(sessionId, isReconnect = false) {
+    // Initialize live data stores (preserve debate messages across reconnects)
     _liveResearch = {};
-    _liveDebateMessages = [];
+    if (!isReconnect) {
+        _liveDebateMessages = [];
+        try {
+            sessionStorage.removeItem('council_debate_session');
+            sessionStorage.removeItem('council_debate_messages');
+        } catch (_) {}
+    }
     _liveCurrentRound = 0;
     _liveDossier = '';
     _liveResearchStatus = '';
@@ -1957,6 +2007,11 @@ function _connectLiveSSE(sessionId) {
         const data = JSON.parse(e.data);
         _renderDebateTyping(null);
         _liveDebateMessages.push(data);
+        // Persist to sessionStorage so messages survive reconnect / page issues
+        try {
+            sessionStorage.setItem('council_debate_session', sessionId);
+            sessionStorage.setItem('council_debate_messages', JSON.stringify(_liveDebateMessages));
+        } catch (_) {}
         _renderDebateMessage(data);
         _updatePodium(null); // clear spotlight
         // Add message to courtroom if user is viewing Phase D
@@ -2016,9 +2071,14 @@ function _connectLiveSSE(sessionId) {
 
     _liveSSE.addEventListener('session_complete', (e) => {
         const data = JSON.parse(e.data);
-        _liveSSE.close();
-        _liveSSE = null;
+        if (_liveSSE) {
+            _liveSSE.close();
+            _liveSSE = null;
+        }
         _updateNewSessionBtnState();
+        // Cancel any pending reconnect — session finished successfully
+        if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+        _reconnectAttempts = 0;
         showToast('Session complete! Loading results…', 'success');
         // Load the completed session so all phases are browsable from files
         setTimeout(() => loadSession(data.session_id), 1500);
@@ -2035,7 +2095,7 @@ function _connectLiveSSE(sessionId) {
                 showToast(`Connection lost. Reconnecting in ${delay / 1000}s (attempt ${_reconnectAttempts}/3)…`, 'warning');
                 _reconnectTimer = setTimeout(() => {
                     _reconnectTimer = null;
-                    _connectLiveSSE(sessionId);
+                    _connectLiveSSE(sessionId, true);
                 }, delay);
             } else {
                 showToast('Connection lost after 3 attempts. The pipeline continues on the server — reload the session when complete.', 'error');
