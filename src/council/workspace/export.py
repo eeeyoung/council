@@ -97,21 +97,21 @@ def export_dossier(session: Session) -> Path:
     """Compile a full research dossier."""
     parts: list[str] = []
 
-    parts.append(f"# COUNCIL Dossier: {session.query or session.name or session.id}")
+    parts.append(f"# COUNCIL Dossier: {(session.panels[0].query if session.panels else session.id) or session.id}")
     parts.append(f"*Compiled {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*")
     parts.append("")
 
     # Abstract
     parts.append("## Abstract")
-    parts.append(f"Research question: **{session.query or '(not specified)'}**")
-    parts.append(f"Experts convened: {len(session.experts)}")
+    parts.append(f"Research question: **{(session.panels[0].query if session.panels else None) or '(not specified)'}**")
+    parts.append(f"Experts convened: {len([e for p in session.panels for e in p.experts])}")
     parts.append(f"Symposia held: {len(session.symposia)}")
     parts.append(f"Total messages: {len(session.messages)}")
     parts.append("")
 
     # Expert Panel
     parts.append("## Expert Panel")
-    for e in session.experts:
+    for e in [e for p in session.panels for e in p.experts]:
         parts.append(_expert_section(e))
 
     # Symposia
@@ -127,7 +127,7 @@ def export_dossier(session: Session) -> Path:
     # Bibliography
     parts.append("## Bibliography")
     all_sources: list[tuple[str, str, str]] = []
-    for e in session.experts:
+    for e in [e for p in session.panels for e in p.experts]:
         for s in e.knowledge_pool.sources:
             all_sources.append((s.url, s.title, s.verification_status))
     if all_sources:
@@ -138,7 +138,7 @@ def export_dossier(session: Session) -> Path:
         parts.append("*No sources collected.*")
 
     content = "\n\n".join(parts)
-    filename = f"{session.id}_dossier.md"
+    filename = f"dossier_{session.id}.md"
     return _write(filename, content)
 
 
@@ -146,7 +146,7 @@ def export_decision_memo(session: Session) -> Path:
     """Compile a decision memo — scored recommendation from the synthesis."""
     parts: list[str] = []
 
-    parts.append(f"# Decision Memo: {session.query or session.name or session.id}")
+    parts.append(f"# Decision Memo: {(session.panels[0].query if session.panels else session.id) or session.id}")
     parts.append(f"*{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*")
     parts.append("")
 
@@ -193,7 +193,7 @@ def export_decision_memo(session: Session) -> Path:
     parts.append("## Evidence Summary")
     verified_count = 0
     total_count = 0
-    for e in session.experts:
+    for e in [e for p in session.panels for e in p.experts]:
         for s in e.knowledge_pool.sources:
             total_count += 1
             if s.verification_status == "verified":
@@ -204,7 +204,7 @@ def export_decision_memo(session: Session) -> Path:
     parts.append("")
 
     parts.append("## Panel")
-    for e in session.experts:
+    for e in [e for p in session.panels for e in p.experts]:
         parts.append(f"- **{e.name}** ({e.discipline}): {e.bias}")
 
     content = "\n\n".join(parts)
@@ -214,9 +214,9 @@ def export_decision_memo(session: Session) -> Path:
 
 def export_scorecard(session: Session) -> Path:
     """Export just the evidence scorecard as structured markdown."""
-    lines = [f"# Evidence Scorecard: {session.query or session.id}", ""]
+    lines = [f"# Evidence Scorecard: {(session.panels[0].query if session.panels else "") or session.id}", ""]
 
-    for e in session.experts:
+    for e in [e for p in session.panels for e in p.experts]:
         pool = e.knowledge_pool
         if not pool.sources:
             continue
@@ -240,7 +240,7 @@ def export_scorecard(session: Session) -> Path:
 
 def export_transcript(session: Session) -> Path:
     """Export just the transcript."""
-    lines = [f"# Transcript: {session.query or session.id}", "",
+    lines = [f"# Transcript: {(session.panels[0].query if session.panels else "") or session.id}", "",
              _transcript_section(session)]
     filename = f"{session.id}_transcript_export.md"
     return _write(filename, "\n".join(lines))

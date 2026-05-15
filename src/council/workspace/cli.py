@@ -2,21 +2,25 @@
 """
 council/workspace/cli.py
 
-Module-based CLI for the session system. Each subcommand is independently
-invoable — no pipeline, no vertical dependencies.
+Module-based CLI for the workspace system. Each subcommand is independently
+invocable — no pipeline, no vertical dependencies.
+
+Single implicit session (id="default"). No ws_id parameter needed.
 
 Usage:
-  uv run python -m council.workspace.cli new <query>
-  uv run python -m council.workspace.cli load <id>
-  uv run python -m council.workspace.cli panel <ws_id> <query>
-  uv run python -m council.workspace.cli list <ws_id>
-  uv run python -m council.workspace.cli add-url <ws_id> <expert_id> <url> [title] [snippet]
-  uv run python -m council.workspace.cli upload <ws_id> <expert_id> <file_path>
-  uv run python -m council.workspace.cli verify <ws_id> <expert_id>
-  uv run python -m council.workspace.cli ask <ws_id> <expert_id> "<message>"
-  uv run python -m council.workspace.cli debate <ws_id> <panel_id>
-  uv run python -m council.workspace.cli synthesize <ws_id> <symposium_id>
-  uv run python -m council.workspace.cli run <query>   # demo: full pipeline
+  uv run python -m council.workspace.cli list
+  uv run python -m council.workspace.cli panel-add <query> [-n N]
+  uv run python -m council.workspace.cli panel-rm <panel_id>
+  uv run python -m council.workspace.cli panel-regenerate <panel_id>
+  uv run python -m council.workspace.cli add-url <panel_id> <expert_id> <url>
+  uv run python -m council.workspace.cli upload <panel_id> <expert_id> <file>
+  uv run python -m council.workspace.cli verify <panel_id> <expert_id>
+  uv run python -m council.workspace.cli ask <panel_id> <expert_id> "<msg>"
+  uv run python -m council.workspace.cli debate --panel <panel_id>
+  uv run python -m council.workspace.cli debate --expert-ids a,b,c --query "Q"
+  uv run python -m council.workspace.cli synthesize <symposium_id>
+  uv run python -m council.workspace.cli export
+  uv run python -m council.workspace.cli run <query>   # demo pipeline
 """
 
 from __future__ import annotations
@@ -40,8 +44,8 @@ from council.workspace.agents import (
     rapporteur_synthesize,
     upload_file_to_expert,
 )
-from council.workspace.db import delete, list_all, load, save
-from council.workspace.state import Symposium, Session
+from council.workspace.db import get_or_create_default, save
+from council.workspace.state import Panel, Symposium, Session
 
 console = Console()
 
@@ -53,11 +57,8 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
-def _load(ws_id: str) -> Session:
-    try:
-        return load(ws_id)
-    except ValueError:
-        _die(f"Session not found: {ws_id}")
+def _load() -> Session:
+    return get_or_create_default()
 
 
 def _find_expert(ws: Session, expert_id: str):
@@ -67,46 +68,33 @@ def _find_expert(ws: Session, expert_id: str):
     return expert
 
 
+def _get_query(ws: Session, panel_id: str | None = None) -> str:
+    """Get a reasonable query string from a panel or fallback."""
+    if panel_id:
+        panel = ws.get_panel(panel_id)
+        if panel and panel.query:
+            return panel.query
+    if ws.panels and ws.panels[0].query:
+        return ws.panels[0].query
+    return "the research context"
+
+
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
-def cmd_new(args: argparse.Namespace) -> None:
-    ws = Session(query=args.query)
-    save(ws)
-    console.print(f"[green]Session created:[/green] [bold]{ws.id}[/bold]")
-    console.print(f"  Query: [italic]{args.query}[/italic]")
-
-
-def cmd_load(args: argparse.Namespace) -> None:
-    ws = _load(args.id)
-    console.print(f"[bold]Session:[/bold] {ws.id}")
-    console.print(f"  Query: [italic]{ws.query or '(none)'}[/italic]")
-    console.print(f"  Experts: {len(ws.experts)}")
-    console.print(f"  Messages: {len(ws.messages)}")
-    console.print(f"  Symposia: {len(ws.symposia)}")
-
-
 def cmd_list(args: argparse.Namespace) -> None:
-    if args.all:
-        sessions = list_all()
-        if not sessions:
-            console.print("[dim]No sessions found.[/dim]")
-            return
-        table = Table(title="Sessions")
-        table.add_column("ID", style="cyan")
-        table.add_column("Updated", style="dim")
-        for w in sessions:
-            table.add_row(w["id"], w["updated_at"])
-        console.print(table)
-        return
+    ws = _load()
 
-    ws = _load(args.ws_id)
-    console.print(Rule(f"Session: {ws.id}"))
-    console.print(f"\n[bold]Session:[/bold] {ws.name or ws.id} (query: {ws.query or '(none)'})")
-    for e in ws.experts:
+    console.print(Rule("COUNCIL Session"))
+    for pi, panel in enumerate(ws.panels):
+        console.print(f"\n[bold]Panel {pi+1}:[/bold] {panel.name or panel.id}")
+        console.print(f"  Query: [italic]{panel.query or '(none)'}[/italic]")
+        console.print(f"  Function: {panel.function_type or '(none)'}")
+        for e in panel.experts:
             n_sources = len(e.knowledge_pool.sources)
             n_opinions = len(e.knowledge_pool.opinions)
-            console.print(f"  [{e.id}] [bold]{e.name}[/bold] — {e.discipline}")
-            console.print(f"       {n_sources} sources, {n_opinions} opinions")
+            console.print(f"    [{e.id}] [bold]{e.name}[/bold] — {e.discipline}")
+            console.print(f"         {n_sources} sources, {n_opinions} opinions")
+
     for sym in ws.symposia:
         console.print(f"\n[bold]Symposium:[/bold] {sym.title or sym.id} ({sym.format})")
         console.print(f"  Participants: {len(sym.participant_ids)}, Messages: {len(sym.message_ids)}")
@@ -114,25 +102,60 @@ def cmd_list(args: argparse.Namespace) -> None:
             console.print(f"  Synthesis: {len(sym.synthesis)} chars")
 
 
-def cmd_panel(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+def cmd_panel_add(args: argparse.Namespace) -> None:
+    ws = _load()
     console.print(f"[yellow]Moderator proposing panel for:[/yellow] {args.query}")
     experts = moderator_propose_panel(query=args.query, max_experts=args.num)
     if not experts:
         _die("Moderator failed to propose experts.")
 
-    ws.name = args.query[:60]
-    ws.query = args.query
-    ws.experts = experts
+    panel = Panel(
+        name=args.query[:60],
+        query=args.query,
+        experts=experts,
+    )
+    ws.panels.append(panel)
     save(ws)
 
-    console.print(f"\n[green]Experts proposed:[/green]")
+    console.print(f"\n[green]Panel added:[/green] [bold]{panel.id}[/bold]")
+    for e in experts:
+        console.print(f"  [{e.id}] [bold]{e.name}[/bold] — {e.discipline} ({e.bias})")
+
+
+def cmd_panel_rm(args: argparse.Namespace) -> None:
+    ws = _load()
+    panel = ws.get_panel(args.panel_id)
+    if not panel:
+        _die(f"Panel not found: {args.panel_id}")
+    ws.panels = [p for p in ws.panels if p.id != args.panel_id]
+    save(ws)
+    console.print(f"[green]Panel removed:[/green] {args.panel_id}")
+
+
+def cmd_panel_regenerate(args: argparse.Namespace) -> None:
+    ws = _load()
+    panel = ws.get_panel(args.panel_id)
+    if not panel:
+        _die(f"Panel not found: {args.panel_id}")
+
+    console.print(f"[yellow]Regenerating experts for:[/yellow] {panel.name or panel.id}")
+    experts = moderator_propose_panel(
+        query=panel.query,
+        max_experts=args.num or 5,
+    )
+    if not experts:
+        _die("Moderator failed to propose experts.")
+
+    panel.experts = experts
+    save(ws)
+
+    console.print(f"\n[green]Panel regenerated:[/green]")
     for e in experts:
         console.print(f"  [{e.id}] [bold]{e.name}[/bold] — {e.discipline} ({e.bias})")
 
 
 def cmd_add_url(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
     expert = _find_expert(ws, args.expert_id)
 
     src = add_source_to_expert(
@@ -152,7 +175,7 @@ def cmd_add_url(args: argparse.Namespace) -> None:
 
 
 def cmd_upload(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
     expert = _find_expert(ws, args.expert_id)
 
     file_path = Path(args.file_path)
@@ -169,7 +192,7 @@ def cmd_upload(args: argparse.Namespace) -> None:
 
 
 def cmd_verify(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
     expert = _find_expert(ws, args.expert_id)
 
     unverified = [s for s in expert.knowledge_pool.sources if s.verification_status != "verified"]
@@ -187,13 +210,14 @@ def cmd_verify(args: argparse.Namespace) -> None:
 
 
 def cmd_ask(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
     expert = _find_expert(ws, args.expert_id)
+    query = _get_query(ws, getattr(args, 'panel_id', None))
 
     response = expert_respond(
         expert=expert,
         session_id=ws.id,
-        query=ws.query or "the research context",
+        query=query,
         message=args.message,
     )
     ws.add_message(role="agent", agent_id=expert.id, agent_name=expert.name, content=response)
@@ -202,25 +226,188 @@ def cmd_ask(args: argparse.Namespace) -> None:
     console.print(RichPanel(response[:1200], title=f"{expert.name}'s response"))
 
 
+def cmd_expert(args: argparse.Namespace) -> None:
+    """Show expert profile, knowledge pool summary, and ChromaDB info."""
+    ws = _load()
+    expert = _find_expert(ws, args.expert_id)
+
+    # Find which panel this expert belongs to
+    panel_name = "?"
+    for p in ws.panels:
+        if any(e.id == expert.id for e in p.experts):
+            panel_name = p.name or p.id
+            break
+
+    # Profile card
+    table = Table(title=f"Expert: {expert.name}")
+    table.add_column("Field", style="dim")
+    table.add_column("Value")
+    table.add_row("UUID", expert.id)
+    table.add_row("Panel", panel_name)
+    table.add_row("Discipline", expert.discipline)
+    table.add_row("Bias", expert.bias or "(none)")
+    table.add_row("Persona", expert.persona_prompt or "(none)")
+    table.add_row("Photo URL", expert.photo_url or "(none)")
+    console.print(table)
+
+    # Knowledge pool summary
+    pool = expert.knowledge_pool
+    console.print(f"\n[bold]Knowledge Pool[/bold] — {len(pool.sources)} sources, {len(pool.opinions)} opinions")
+
+    if pool.sources:
+        src_table = Table(title="Sources")
+        src_table.add_column("ID", style="dim")
+        src_table.add_column("Status")
+        src_table.add_column("Title / URL")
+        for s in pool.sources:
+            icon = {"verified": "[green]✓[/green]", "misattributed": "[red]✗[/red]",
+                    "unverifiable": "[yellow]?[/yellow]"}.get(s.verification_status, "[dim]○[/dim]")
+            src_table.add_row(s.id, icon, (s.title or s.url)[:80])
+        console.print(src_table)
+
+    if pool.opinions:
+        console.print(f"\n[bold]Opinions:[/bold]")
+        for o in pool.opinions:
+            console.print(f"  • {o.text[:120]}… (cites {len(o.source_ids)} sources)")
+
+    # ChromaDB info
+    console.print(f"\n[bold]ChromaDB[/bold] — collection: [cyan]expert_{expert.id}[/cyan]")
+    try:
+        import os
+        import chromadb
+        from chromadb.config import Settings
+        client = chromadb.PersistentClient(
+            path=os.path.join(os.getcwd(), "chroma_db", "ws_default"),
+            settings=Settings(anonymized_telemetry=False),
+        )
+        col = client.get_collection(f"expert_{expert.id}")
+        count = col.count()
+        console.print(f"  Chunks indexed: {count}")
+        if count > 0:
+            data = col.get(limit=1, include=["metadatas"])
+            if data["metadatas"]:
+                m = data["metadatas"][0]
+                console.print(f"  Sample metadata: source_id={m.get('source_id','?')} "
+                              f"title={str(m.get('title','?'))[:60]} "
+                              f"status={m.get('verification_status','?')}")
+    except Exception as e:
+        console.print(f"  [dim]Could not open collection: {e}[/dim]")
+
+
+def cmd_expert_sources(args: argparse.Namespace) -> None:
+    """List all sources in an expert's knowledge pool with optional status filter."""
+    ws = _load()
+    expert = _find_expert(ws, args.expert_id)
+
+    sources = expert.knowledge_pool.sources
+    if args.status:
+        if args.status == "pending":
+            sources = [s for s in sources if not s.verification_status]
+        else:
+            sources = [s for s in sources if s.verification_status == args.status]
+
+    if not sources:
+        console.print(f"[dim]No sources found{'' if not args.status else ' with status=' + args.status}[/dim]")
+        return
+
+    console.print(f"[bold]{expert.name}[/bold] — {len(sources)} source(s)")
+    for s in sources:
+        status = s.verification_status or "pending"
+        icon = {"verified": "✓", "misattributed": "✗", "unverifiable": "?"}.get(status, "○")
+        console.print(f"\n  [{icon} [bold]{status}[/bold]] [{s.id}] {s.title or 'Untitled'}")
+        if s.url:
+            console.print(f"    URL: [cyan]{s.url}[/cyan]")
+        if s.snippet:
+            console.print(f"    Snippet: {s.snippet[:200]}")
+        if s.verification_note:
+            console.print(f"    Note: [dim]{s.verification_note}[/dim]")
+        if s.full_text:
+            console.print(f"    Full text: {len(s.full_text)} chars (type={s.type}, added_by={s.added_by})")
+
+
+def cmd_expert_chunks(args: argparse.Namespace) -> None:
+    """Show ChromaDB vector chunks for an expert."""
+    ws = _load()
+    expert = _find_expert(ws, args.expert_id)
+
+    try:
+        import os
+        import chromadb
+        from chromadb.config import Settings
+        client = chromadb.PersistentClient(
+            path=os.path.join(os.getcwd(), "chroma_db", "ws_default"),
+            settings=Settings(anonymized_telemetry=False),
+        )
+        col = client.get_collection(f"expert_{expert.id}")
+        count = col.count()
+        limit = min(args.limit, count)
+        if count == 0:
+            console.print("[dim]No chunks indexed for this expert.[/dim]")
+            return
+
+        data = col.get(limit=limit, include=["documents", "metadatas"])
+        console.print(f"[bold]{expert.name}[/bold] — {count} total chunks (showing {limit})")
+
+        for i in range(limit):
+            doc = data["documents"][i]
+            meta = data["metadatas"][i] if data["metadatas"] else {}
+            console.print(f"\n[bold]Chunk {i+1}[/bold]")
+            console.print(f"  Source: {meta.get('title', '?')}")
+            console.print(f"  URL: [cyan]{meta.get('url', '?')}[/cyan]")
+            console.print(f"  Status: {meta.get('verification_status', '?')}")
+            console.print(f"  Text: [dim]{doc[:300]}...[/dim]")
+
+    except Exception as e:
+        _die(f"Could not open ChromaDB collection: {e}")
+
+
 def cmd_debate(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
+    participants = []
+    query = ""
+
+    # Determine participants and query based on mode
+    if args.expert_ids:
+        # Mode B: custom expert IDs
+        for eid in args.expert_ids.split(","):
+            eid = eid.strip()
+            expert = ws.get_expert(eid)
+            if expert:
+                participants.append(expert)
+        query = args.query or "Custom Symposium"
+    elif args.panel:
+        # Mode A: use a panel's experts + query
+        panel = ws.get_panel(args.panel)
+        if not panel:
+            _die(f"Panel not found: {args.panel}")
+        participants = list(panel.experts)
+        query = panel.query or args.query or "Debate"
+    else:
+        # Fallback: all experts across all panels
+        for panel in ws.panels:
+            participants.extend(panel.experts)
+        query = args.query or "Cross-panel Debate"
+
+    if not participants:
+        _die("No participants found.")
+
     sym = Symposium(
-        title=f"Debate: {ws.query[:50]}",
+        title=f"Debate: {query[:50]}",
         format="structured",
-        participant_ids=[e.id for e in ws.experts],
+        participant_ids=[e.id for e in participants],
     )
     ws.symposia.append(sym)
 
     transcript_lines: list[str] = []
 
-    for i, expert in enumerate(ws.experts):
+    for i, expert in enumerate(participants):
         turn = i + 1
         console.print(f"\n[yellow]Turn {turn}: {expert.name}[/yellow]")
 
         context = "\n".join(transcript_lines) if transcript_lines else "(You are the first speaker.)"
         prompt = (
             f"=== DEBATE TRANSCRIPT SO FAR ===\n{context}\n=== END TRANSCRIPT ===\n\n"
-            f"Present your evidence-based position on: {ws.query}\n\n"
+            f"Present your evidence-based position on: {query}\n\n"
             f"As turn {turn}, respond to previous speakers and present your unique "
             f"disciplinary perspective grounded in your knowledge pool."
         )
@@ -228,7 +415,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
         speech = expert_respond(
             expert=expert,
             session_id=ws.id,
-            query=ws.query,
+            query=query,
             message=prompt,
         )
         transcript_lines.append(f"[Turn {turn}] **{expert.name}** ({expert.discipline}):\n{speech}")
@@ -248,7 +435,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
 
 
 def cmd_synthesize(args: argparse.Namespace) -> None:
-    ws = _load(args.ws_id)
+    ws = _load()
     sym = ws.get_symposium(args.symposium_id)
     if not sym:
         _die(f"Symposium not found: {args.symposium_id}")
@@ -264,12 +451,13 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
         if m.role == "agent"
     )
     scorecard = str(sym.scorecard) if sym.scorecard else "[]"
+    query = _get_query(ws)
 
     console.print("[yellow]Rapporteur is synthesizing...[/yellow]")
     synthesis = rapporteur_synthesize(
         transcript=transcript,
         scorecard=scorecard,
-        query=ws.query,
+        query=query,
     )
     sym.synthesis = synthesis
     save(ws)
@@ -279,7 +467,7 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
 
 def cmd_export(args: argparse.Namespace) -> None:
     from council.workspace.export import export_all
-    ws = _load(args.ws_id)
+    ws = _load()
     formats = None if args.format == "all" else [args.format]
     result = export_all(ws, formats)
     console.print(f"[green]Exported:[/green]")
@@ -288,23 +476,21 @@ def cmd_export(args: argparse.Namespace) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    """Demo mode: full pipeline from query to synthesis. Convenience, not the primary interface."""
+    """Demo mode: full pipeline from query to synthesis."""
     console.print(f"\n[bold]COUNCIL Session — Demo Run[/bold]\n")
     query = args.query
-
-    # Create session
-    ws = Session(query=query)
-    console.print(f"Session [bold]{ws.id}[/bold]")
+    ws = _load()
 
     # Panel
     console.print(Rule("Panel"))
     experts = moderator_propose_panel(query=query, max_experts=args.num)
     if not experts:
         _die("Moderator failed.")
-    ws.name = query[:60]
-    ws.query = query
-    ws.experts = experts
-    
+    panel = Panel(name=query[:60], query=query, experts=experts)
+    ws.panels.append(panel)
+    save(ws)
+    console.print(f"Panel: [bold]{panel.id}[/bold]")
+
     for e in experts:
         console.print(f"  [bold]{e.name}[/bold] — {e.discipline}")
 
@@ -318,6 +504,8 @@ def cmd_run(args: argparse.Namespace) -> None:
             expert.knowledge_pool.sources.append(verified)
             console.print(f"  [{verified.verification_status or 'pending'}] {src.title[:60]}")
 
+    save(ws)
+
     # Debate
     console.print(Rule("Debate"))
     sym = Symposium(
@@ -327,7 +515,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
     ws.symposia.append(sym)
     transcript_lines: list[str] = []
-    for i, expert in enumerate(ws.experts):
+    for i, expert in enumerate(panel.experts):
         turn = i + 1
         console.print(f"[yellow]Turn {turn}: {expert.name}[/yellow]")
         context = "\n".join(transcript_lines) if transcript_lines else "(You are the first speaker.)"
@@ -344,10 +532,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Synthesize
     console.print(Rule("Synthesis"))
     transcript = "\n\n".join(transcript_lines)
+    all_experts = [e for p in ws.panels for e in p.experts]
     scorecard = str([
         {"claim": s.snippet[:100], "agent_name": s.added_by, "source_url": s.url,
          "verification_status": s.verification_status}
-        for e in ws.experts for s in e.knowledge_pool.sources if s.verification_status == "verified"
+        for e in all_experts for s in e.knowledge_pool.sources if s.verification_status == "verified"
     ])
     synthesis = rapporteur_synthesize(transcript=transcript, scorecard=scorecard, query=query)
     sym.synthesis = synthesis
@@ -361,33 +550,31 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="council-session",
-        description="COUNCIL Session CLI — module-based, no pipeline",
+        prog="council-workspace",
+        description="COUNCIL Workspace CLI — single-session, multi-panel",
     )
     sub = parser.add_subparsers(dest="command")
 
-    # new
-    p = sub.add_parser("new", help="Create a new session")
-    p.add_argument("query", nargs="?", default="")
-
-    # load
-    p = sub.add_parser("load", help="Show session summary")
-    p.add_argument("id")
-
     # list
-    p = sub.add_parser("list", help="List sessions or experts")
-    p.add_argument("ws_id", nargs="?")
-    p.add_argument("--all", "-a", action="store_true", help="List all sessions")
+    sub.add_parser("list", help="List all panels, experts, and symposia")
 
-    # panel
-    p = sub.add_parser("panel", help="Propose an expert panel")
-    p.add_argument("ws_id")
+    # panel-add
+    p = sub.add_parser("panel-add", help="Add a new expert panel")
     p.add_argument("query")
+    p.add_argument("-n", "--num", type=int, default=5, help="Number of experts")
+
+    # panel-rm
+    p = sub.add_parser("panel-rm", help="Remove a panel")
+    p.add_argument("panel_id")
+
+    # panel-regenerate
+    p = sub.add_parser("panel-regenerate", help="Regenerate experts for a panel")
+    p.add_argument("panel_id")
     p.add_argument("-n", "--num", type=int, default=5, help="Number of experts")
 
     # add-url
     p = sub.add_parser("add-url", help="Add a URL source to an expert")
-    p.add_argument("ws_id")
+    p.add_argument("panel_id")
     p.add_argument("expert_id")
     p.add_argument("url")
     p.add_argument("--title", "-t", default="")
@@ -395,33 +582,48 @@ def build_parser() -> argparse.ArgumentParser:
 
     # upload
     p = sub.add_parser("upload", help="Upload a file to an expert")
-    p.add_argument("ws_id")
+    p.add_argument("panel_id")
     p.add_argument("expert_id")
     p.add_argument("file_path")
 
+    # expert — inspect expert profile and storage
+    p = sub.add_parser("expert", help="Show expert profile, pool summary, and ChromaDB info")
+    p.add_argument("expert_id", help="Expert UUID (e.g. 954f0356)")
+
+    # expert-sources — list all sources for an expert
+    p = sub.add_parser("expert-sources", help="List all sources in an expert's knowledge pool")
+    p.add_argument("expert_id", help="Expert UUID")
+    p.add_argument("--status", "-s", default="", choices=["verified","misattributed","unverifiable","pending",""],
+                   help="Filter by verification status (default: all)")
+
+    # expert-chunks — show ChromaDB chunks for an expert
+    p = sub.add_parser("expert-chunks", help="Show ChromaDB vector chunks for an expert")
+    p.add_argument("expert_id", help="Expert UUID")
+    p.add_argument("--limit", "-n", type=int, default=10, help="Max chunks to show (default: 10)")
+
     # verify
     p = sub.add_parser("verify", help="Fact-check unverified sources for an expert")
-    p.add_argument("ws_id")
+    p.add_argument("panel_id")
     p.add_argument("expert_id")
 
     # ask
     p = sub.add_parser("ask", help="Ask an expert a question")
-    p.add_argument("ws_id")
+    p.add_argument("panel_id")
     p.add_argument("expert_id")
     p.add_argument("message")
 
     # debate
     p = sub.add_parser("debate", help="Run a structured debate")
-    p.add_argument("ws_id")
+    p.add_argument("--panel", "-p", default="", help="Use this panel's experts + query")
+    p.add_argument("--expert-ids", default="", help="Comma-separated expert IDs (custom mode)")
+    p.add_argument("--query", "-q", default="", help="Custom debate question")
 
     # synthesize
     p = sub.add_parser("synthesize", help="Rapporteur synthesizes a symposium")
-    p.add_argument("ws_id")
     p.add_argument("symposium_id")
 
     # export
     p = sub.add_parser("export", help="Export dossier, memo, scorecard, or transcript")
-    p.add_argument("ws_id")
     p.add_argument("--format", "-f", default="all", choices=["all","dossier","memo","scorecard","transcript"])
 
     # run (demo)
@@ -441,14 +643,17 @@ def main() -> None:
         return
 
     cmds = {
-        "new": cmd_new,
-        "load": cmd_load,
         "list": cmd_list,
-        "panel": cmd_panel,
+        "panel-add": cmd_panel_add,
+        "panel-rm": cmd_panel_rm,
+        "panel-regenerate": cmd_panel_regenerate,
         "add-url": cmd_add_url,
         "upload": cmd_upload,
         "verify": cmd_verify,
         "ask": cmd_ask,
+        "expert": cmd_expert,
+        "expert-sources": cmd_expert_sources,
+        "expert-chunks": cmd_expert_chunks,
         "debate": cmd_debate,
         "synthesize": cmd_synthesize,
         "export": cmd_export,
