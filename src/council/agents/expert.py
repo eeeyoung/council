@@ -59,6 +59,7 @@ def build_expert_agent(
         bias=expert.bias,
     )
 
+    tools = [t for t in [search_tool, library_write, library_read, pdf_tool] if t is not None]
     return Agent(
         role=f"{expert.discipline} Expert",
         goal=(
@@ -68,11 +69,11 @@ def build_expert_agent(
             f"push the debate toward rigorous scientific truth."
         ),
         backstory=backstory,
-        tools=[search_tool, library_write, library_read, pdf_tool],
+        tools=tools,
         llm=llm,
         verbose=verbose,
         allow_delegation=False,
-        max_iter=8,  # Allow room for search + 3-5 writes + final report
+        max_iter=8,
     )
 
 

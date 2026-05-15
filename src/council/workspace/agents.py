@@ -56,7 +56,7 @@ def _get_expert_collection(session_id: str, expert_id: str) -> chromadb.Collecti
     """Get or create a ChromaDB collection scoped to one expert."""
     key = f"{session_id}_{expert_id}"
     if key not in _clients:
-        db_path = os.path.join(os.getcwd(), "chroma_db", f"ws_{session_id}")
+        db_path = os.path.join(os.getcwd(), "chroma_db", "ws_default")
         os.makedirs(db_path, exist_ok=True)
         _clients[key] = chromadb.PersistentClient(
             path=db_path,
@@ -247,35 +247,18 @@ def _parse_json(raw: str) -> dict | list | None:
 
 
 def _enrich_source(source: PoolSource) -> PoolSource:
-    """Attempt to fetch full text from a source URL. Basic implementation.
-
-    FUTURE: Replace with trafilatura or readability-lxml for proper boilerplate
-    stripping. Currently does a simple HTML fetch + tag removal. Also does not
-    handle PDF downloads — those should go through upload_file_to_expert()."""
+    """Fetch full text from a source URL using trafilatura for clean extraction."""
     if not source.url or not source.url.startswith("http"):
         return source
 
     try:
-        req = urllib.request.Request(
-            source.url,
-            headers={"User-Agent": "COUNCIL/0.1"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            if "html" not in content_type and "text" not in content_type:
-                return source  # PDF, binary, etc. — skip
-            html = resp.read().decode("utf-8", errors="replace")
+        from council.tools.library_tool import _fetch_and_extract
 
-            # Basic tag stripping (not robust — see FUTURE note above)
-            text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = re.sub(r"\s+", " ", text).strip()
-
-            if len(text) > 200:
-                source.full_text = text
+        text = _fetch_and_extract(source.url, timeout=10)
+        if text and len(text) > 200:
+            source.full_text = text
     except Exception:
-        pass  # Silently keep the snippet — enrichment is best-effort
+        pass  # Best-effort — silently keep the snippet
 
     return source
 
@@ -301,6 +284,8 @@ def add_source_to_expert(
     The source starts as type="collected" — call fact_check_source() separately
     to verify it."""
     source = PoolSource(
+        origin="curated",
+        source_type="url",
         type="collected",
         url=url,
         title=title,
@@ -337,21 +322,50 @@ def upload_file_to_expert(
     if not file_path.exists():
         return None
 
-    # Use the existing PDF parser
-    try:
-        pdf_tool = create_pdf_tool()
-        full_text = pdf_tool._run(file_path=str(file_path))
-    except Exception:
-        # Fallback: try reading as plain text
+    ext = file_path.suffix.lower()
+    full_text = ""
+
+    # PDF parsing
+    if ext == ".pdf":
+        try:
+            pdf_tool = create_pdf_tool()
+            full_text = pdf_tool._run(source=str(file_path))
+        except Exception:
+            return None
+
+        # Check for parse errors from the tool (it returns error strings, doesn't raise)
+        if full_text.startswith("PDF parsing failed"):
+            return None
+
+        # Strip the header line "[PDF: N total pages, extracting M]"
+        if full_text.startswith("[PDF:"):
+            nl = full_text.find("\n")
+            if nl != -1:
+                full_text = full_text[nl + 1:].strip()
+
+        # Check for image-only / scanned PDFs with no extractable text
+        if not full_text or len(full_text) < 20:
+            return None
+
+    else:
+        # Non-PDF: read as plain text
         try:
             full_text = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            try:
+                full_text = file_path.read_text(encoding="latin-1")
+            except Exception:
+                return None
         except Exception:
             return None
 
     if not full_text or not full_text.strip():
         return None
 
+    stype = "pdf" if ext == ".pdf" else ("doc" if ext in (".doc", ".docx") else ("txt" if ext in (".txt", ".md") else "other"))
     source = PoolSource(
+        origin="curated",
+        source_type=stype,
         type="uploaded",
         title=file_path.name,
         full_text=full_text,
@@ -391,17 +405,15 @@ def form_opinion(
         return None  # No pool content to form an opinion from
 
     exp_def = _expert_to_definition(expert)
-    search_tool = create_search_tool()
     library_write, library_read = create_library_tools()
-    pdf_tool = create_pdf_tool()
     llm = build_llm(temperature=0.6)
 
     agent = build_expert_agent(
         expert=exp_def,
-        search_tool=search_tool,
+        search_tool=None,
         library_write=library_write,
         library_read=library_read,
-        pdf_tool=pdf_tool,
+        pdf_tool=None,
         llm=llm,
         verbose=verbose,
     )
@@ -474,17 +486,15 @@ def expert_respond(
     # RAG retrieval
     retrieved = _retrieve_from_expert_pool(session_id, expert.id, message)
 
-    search_tool = create_search_tool()
     library_write, library_read = create_library_tools()
-    pdf_tool = create_pdf_tool()
     llm = build_llm(temperature=0.8)
 
     agent = build_expert_agent(
         expert=exp_def,
-        search_tool=search_tool,
+        search_tool=None,
         library_write=library_write,
         library_read=library_read,
-        pdf_tool=pdf_tool,
+        pdf_tool=None,
         llm=llm,
         verbose=verbose,
     )
@@ -526,6 +536,7 @@ IMPORTANT — First, classify the message:
   "how are you", chitchat, or personal questions about yourself): respond naturally in
   character — be warm, personable, and stay true to your personality and discipline.
   Do NOT use the structured debate format. Just be yourself.
+  Keep it SHORT: 1-3 sentences, 40-60 words maximum. Be concise and charming, not verbose.
 - If it is SCIENTIFIC (research questions, evidence requests, analysis, debate):
   use the structured debate format below. Reason from your knowledge pool. Cite sources.
 
@@ -535,7 +546,8 @@ Use the structured debate format ONLY for scientific inquiries.
 
     expected_output = """
 If CASUAL: A natural, in-character response. Be yourself — your personality, discipline,
-and intellectual leanings should shine through. Keep it warm and conversational.
+and intellectual leanings should shine through. Keep it warm, conversational, and SHORT:
+1-3 sentences, 40-60 words maximum. No lists, no structured sections, no rambling.
 
 If SCIENTIFIC: A structured response using EXACTLY this markdown format:
 
@@ -558,12 +570,13 @@ def expert_research(
     expert: Expert,
     query: str,
     research_goal: str = "",
+    panel_peers: list[dict] | None = None,
     verbose: bool = False,
 ) -> list[PoolSource]:
     """Expert searches for sources on a topic. Returns collected sources (unverified).
 
-    These sources should be passed through fact_check_source() before the expert
-    forms opinions on them."""
+    If panel_peers is provided, the prompt includes contrast awareness — telling
+    this expert what the others will likely find so they consciously differentiate."""
     exp_def = _expert_to_definition(expert)
     pool_text = _pool_to_text(expert.knowledge_pool)
 
@@ -584,6 +597,32 @@ def expert_research(
 
     goal = research_goal or f"Find 3-5 highly relevant sources on: {query}"
 
+    # Build contrast-awareness paragraph
+    contrast = ""
+    if panel_peers:
+        peer_lines = []
+        for p in panel_peers:
+            peer_bias = p.get("bias", "")
+            peer_lines.append(
+                f"- {p['name']} ({p['discipline']})"
+                + (f" — likely focus: {peer_bias}" if peer_bias else "")
+            )
+        contrast = f"""
+=== YOUR PANEL PEERS ===
+You are NOT the only expert on this panel. Other experts include:
+{chr(10).join(peer_lines)}
+
+YOUR UNIQUE VALUE: You are a {expert.discipline} expert with a leaning toward
+"{expert.bias}". Your peers have DIFFERENT disciplinary lenses — they will
+naturally find different sources than you.
+
+CRITICAL: Do NOT find sources that your peers would obviously also find.
+Instead, search for sources that are UNIQUELY visible through YOUR disciplinary
+lens. Use search terms from YOUR field's vocabulary. Look in venues and journals
+that YOUR discipline reads. Your peers will cover their own angles — the panel
+needs YOU to bring what only YOU can find.
+"""
+
     description = f"""
 You are {expert.name}, a {expert.discipline} expert.
 Your intellectual leaning: {expert.bias}.
@@ -593,7 +632,7 @@ Research context: "{query}"
 Research goal: {goal}
 
 {pool_text}
-
+{contrast}
 Your task: Use web_search to find 3-5 relevant sources that address the research goal
 from your disciplinary perspective. For each source, deposit it into the shared library
 using library_write with the EXACT URL, title, and snippet from the search result.
@@ -614,6 +653,8 @@ Return a JSON array of the sources you found. Each entry must have:
 
     return [
         PoolSource(
+            origin="discovered",
+            source_type="url",
             type="collected",
             url=item.get("url", ""),
             title=item.get("title", ""),
