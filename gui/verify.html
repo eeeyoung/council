@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COUNCIL — Source Verifier</title>
+  <link rel="stylesheet" href="/gui/workspace.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-body);
+      background: #faf7f2;
+      color: #3d3226;
+      min-height: 100vh;
+    }
+
+    .verify-container {
+      max-width: 680px;
+      margin: 60px auto;
+      padding: 0 24px;
+    }
+
+    .verify-card {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 36px 32px 32px;
+      border: 1px solid var(--border);
+    }
+
+    .verify-header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .verify-header h1 {
+      font-family: var(--font-heading);
+      font-size: 22px;
+      font-weight: 700;
+      color: #3d3226;
+      letter-spacing: 0.3px;
+    }
+    .verify-header p {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* ── Form ─────────────────────────────────────────────────────── */
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .form-group textarea,
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      font-family: var(--font-body);
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: #fdfbf6;
+      color: #3d3226;
+      resize: vertical;
+      transition: border-color 0.15s;
+    }
+    .form-group textarea:focus,
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(184,151,62,0.10);
+    }
+    .form-group textarea { min-height: 56px; }
+    .form-group input:invalid { border-color: var(--terracotta); }
+
+    .verify-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      font-family: var(--font-heading);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: #fff;
+      background: var(--gold);
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      margin-top: 4px;
+    }
+    .verify-btn:hover { background: #a88835; }
+    .verify-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* ── Stamp ────────────────────────────────────────────────────── */
+
+    #result {
+      margin-top: 32px;
+      display: none;
+    }
+
+    .stamp-wrap {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .stamp {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      font-family: var(--font-heading);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-align: center;
+      line-height: 1.3;
+      border: 4px solid;
+      transition: all 0.3s ease;
+    }
+    .stamp.verified {
+      background: var(--olive-bg);
+      color: var(--olive);
+      border-color: var(--olive);
+    }
+    .stamp.misattributed {
+      background: var(--terracotta-bg);
+      color: var(--terracotta);
+      border-color: var(--terracotta);
+      border-radius: 8px;
+      width: 150px;
+      height: 100px;
+    }
+    .stamp.unverifiable {
+      background: rgba(180,120,90,0.08);
+      color: #b07050;
+      border-color: #c09080;
+    }
+    .stamp.uncited {
+      background: rgba(0,0,0,0.03);
+      color: var(--text-dim);
+      border-color: var(--border);
+    }
+
+    .stamp-label {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Details ──────────────────────────────────────────────────── */
+
+    .details {
+      background: #fdfbf6;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      padding: 16px 18px;
+    }
+    .details dt {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      margin-bottom: 2px;
+    }
+    .details dd {
+      font-size: 13px;
+      color: #5a4d3a;
+      margin-bottom: 12px;
+      line-height: 1.5;
+      word-break: break-all;
+    }
+    .details dd:last-child { margin-bottom: 0; }
+    .details dd.note {
+      color: #6b5d4a;
+      background: #fffaf2;
+      border-left: 3px solid var(--gold);
+      padding: 8px 12px;
+      border-radius: 0 4px 4px 0;
+      font-size: 13px;
+    }
+    .details dd.url a {
+      color: var(--gold);
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .details dd.url a:hover { text-decoration: underline; }
+
+    .extracted-preview {
+      margin-top: 16px;
+      background: #fdfbf6;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      padding: 16px 18px;
+      display: none;
+    }
+    .extracted-preview h4 {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .extracted-preview pre {
+      font-family: var(--font-body);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #5a4d3a;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* ── Error ────────────────────────────────────────────────────── */
+
+    .error-box {
+      margin-top: 24px;
+      padding: 14px 18px;
+      background: var(--terracotta-bg);
+      border: 1px solid var(--terracotta);
+      border-radius: var(--radius-sm);
+      color: var(--terracotta);
+      font-size: 13px;
+      display: none;
+    }
+
+    /* ── Spinner ──────────────────────────────────────────────────── */
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+
+    .verify-footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+  <div class="verify-container">
+    <div class="verify-card">
+      <div class="verify-header">
+        <h1>Source Verifier</h1>
+        <p>Check whether a web source supports a claim</p>
+      </div>
+
+      <form id="verify-form" autocomplete="off">
+        <div class="form-group">
+          <label for="claim">Claim / Context (optional)</label>
+          <textarea id="claim" rows="2" placeholder="e.g. NALFAs are a promising approach for point-of-care virus detection"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="url">Source URL *</label>
+          <input id="url" type="url" placeholder="https://journals.plos.org/plosone/article?id=..." required>
+        </div>
+        <div class="form-group">
+          <label for="quote">Source Quote (optional)</label>
+          <textarea id="quote" rows="3" placeholder="Paste the exact sentence from the source that supports the claim..."></textarea>
+        </div>
+        <button type="submit" class="verify-btn" id="verify-btn">Verify Source</button>
+      </form>
+
+      <div id="error" class="error-box"></div>
+
+      <div id="result">
+        <div class="stamp-wrap">
+          <div class="stamp" id="stamp"></div>
+          <div class="stamp-label" id="stamp-label"></div>
+        </div>
+
+        <dl class="details">
+          <dt>Normalized URL</dt>
+          <dd class="url" id="detail-url"></dd>
+          <dt>Verification Note</dt>
+          <dd class="note" id="detail-note"></dd>
+          <dt>Elapsed</dt>
+          <dd id="detail-elapsed"></dd>
+        </dl>
+
+        <div class="extracted-preview" id="extracted-block">
+          <h4>Extracted Page Text Preview</h4>
+          <pre id="extracted-text"></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="verify-footer">
+      COUNCIL Source Verifier &middot; Uses trafilatura for full-page extraction
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('verify-form');
+    const btn = document.getElementById('verify-btn');
+    const errorBox = document.getElementById('error');
+    const resultDiv = document.getElementById('result');
+
+    const stampEl = document.getElementById('stamp');
+    const stampLabel = document.getElementById('stamp-label');
+    const detailUrl = document.getElementById('detail-url');
+    const detailNote = document.getElementById('detail-note');
+    const detailElapsed = document.getElementById('detail-elapsed');
+    const extractedBlock = document.getElementById('extracted-block');
+    const extractedText = document.getElementById('extracted-text');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const url = document.getElementById('url').value.trim();
+      const quote = document.getElementById('quote').value.trim();
+      const claim = document.getElementById('claim').value.trim();
+
+      // ── Validate ──────────────────────────────────────────────────
+      if (!url) {
+        showError('Please enter a source URL.');
+        return;
+      }
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        showError('URL must start with http:// or https://');
+        return;
+      }
+
+      // ── Loading state ─────────────────────────────────────────────
+      hideError();
+      resultDiv.style.display = 'none';
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Verifying…';
+
+      try {
+        const resp = await fetch('/api/verify-source', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, quote, claim }),
+        });
+
+        if (!resp.ok) {
+          throw new Error(`Server returned ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        renderResult(data);
+
+      } catch (err) {
+        showError(`Verification failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify Source';
+      }
+    });
+
+    function renderResult(data) {
+      const status = data.status || 'unverifiable';
+      const normalizedUrl = data.url || '';
+      const isUncited = !normalizedUrl || normalizedUrl === 'UNCITED';
+
+      // ── Stamp ─────────────────────────────────────────────────────
+      stampEl.className = 'stamp';
+      stampEl.classList.add(isUncited ? 'uncited' : status);
+
+      if (isUncited) {
+        stampEl.innerHTML = 'UNCITED';
+        stampLabel.textContent = 'No source URL could be determined';
+      } else if (status === 'verified') {
+        stampEl.innerHTML = '&#10003;<br>VERIFIED';
+        stampLabel.textContent = 'Claim confirmed at source';
+      } else if (status === 'misattributed') {
+        stampEl.innerHTML = '&#9888;<br>MISATTRIBUTED';
+        stampLabel.textContent = 'Quote found but source does not match';
+      } else {
+        stampEl.innerHTML = '&#10007;<br>UNVERIFIABLE';
+        stampLabel.textContent = 'Could not confirm the claim';
+      }
+
+      // ── Details ───────────────────────────────────────────────────
+      if (normalizedUrl && normalizedUrl.startsWith('http')) {
+        detailUrl.innerHTML = `<a href="${escHtml(normalizedUrl)}" target="_blank" rel="noopener">${escHtml(normalizedUrl)}</a>`;
+      } else {
+        detailUrl.textContent = normalizedUrl || '—';
+      }
+
+      detailNote.textContent = data.note || '—';
+      detailElapsed.textContent = data.elapsed != null ? `${data.elapsed}s` : '—';
+
+      // ── Extracted preview ─────────────────────────────────────────
+      if (data.extracted_md_preview) {
+        extractedText.textContent = data.extracted_md_preview;
+        extractedBlock.style.display = 'block';
+      } else {
+        extractedBlock.style.display = 'none';
+      }
+
+      resultDiv.style.display = 'block';
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = 'block';
+      resultDiv.style.display = 'none';
+    }
+
+    function hideError() {
+      errorBox.style.display = 'none';
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
