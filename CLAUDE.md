@@ -86,9 +86,114 @@ gui/                 — Mission Control web dashboard (HTML/JS/CSS)
 | `/api/config` | GET | Return server mode (`live` or `review`) |
 | `/outputs/{filename}` | GET | Serve output files (transcripts, dossiers, etc.) |
 
-## GUI architecture
+## Workspace GUI architecture
 
-`gui/app.js` is the single frontend file. Key globals:
+`gui/workspace.js` + `gui/workspace.html` — "The Academy" (served by `council.workspace.server`).
+A chat-centric workspace with a different model from Mission Control. Served at `/` via
+`workspace.html`. Run with:
+
+```bash
+uv run python -m council.workspace.server --port 8001
+```
+
+### Three-panel layout
+
+```
+┌── Sidebar ───────────────┬── Main Area ──────────────────┬── Context Panel ──┐
+│ COUNCIL                  │ Header (expert name / sym)     │ [Evidence]        │
+│ Session · abc123         │   discipline · meta  [actions] │ [Sources]         │
+│                          │                                │ [Synthesis]       │
+│ ▼ Panels                 │ Conversation                   │                   │
+│   ☉ Expert A             │   messages / empty state       │ context-content   │
+│   ☉ Expert B             │   typing indicator             │                   │
+│   [+ New Panel]          │                                │                   │
+│                          │ Input Bar (expert chat only)   │                   │
+│ ▼ Symposia               │   [text input] [Send] [Stop]  │                   │
+│   ⚡ Debate: ...          │                                │                   │
+│                          │                                │                   │
+│ [← Workspaces]           │                                │                   │
+└──────────────────────────┴────────────────────────────────┴───────────────────┘
+```
+
+### UI region glossary
+
+| Region | DOM anchor | What it contains |
+|--------|-----------|-----------------|
+| **Sidebar** | `#sidebar` | Session name, **Panel List** (`#sidebar-panels`), **Symposia List** (`#sidebar-symposia`), Workspaces button |
+| **Main Area** | `#main-panel` | Contains `#main-content` (header + conversation) and `#input-bar` |
+| **Header** | `.main-header` inside `#main-content` | Expert/symposium name, discipline, action buttons |
+| **Conversation** | `#conversation` inside `#main-content` | Message bubbles, empty state, typing indicator |
+| **Input Bar** | `#input-bar` | Text input + Send + Stop (visible only for Expert Chat) |
+| **Context Panel** | `#context-panel` | Evidence / Sources / Synthesis tabs (`#context-content`) |
+| **Modal** | `#modal-overlay` | Overlay for create session, add experts, convene symposium, add source, upload |
+| **Toast** | `#toasts` | Corner notifications |
+
+### Views (what appears in the Main Area)
+
+| View | Trigger | Header shows | Input bar |
+|------|---------|-------------|-----------|
+| **Session List** | `showSessionList()` / "← Workspaces" | "The Academy" + session cards | hidden |
+| **Expert Chat** | Click expert in Panel List | Expert name, discipline, bias; [ + Source ] [ ☰ Context ] | visible |
+| **Symposium** | Click symposium in Symposia List, or after creation | ⚡ title, format, N experts, N msgs; [ ▶ Run Round ] [ 📋 Synthesize ] | hidden |
+
+### Key globals
+
+| Variable | Purpose |
+|----------|---------|
+| `_sessionId` | Current session UUID |
+| `_session` | Full session JSON from `GET /api/sessions/{id}` |
+| `_activeExpert` | Currently selected expert object (null when viewing symposium/list) |
+| `_activeSymposium` | Currently selected symposium ID (null when viewing expert/list) |
+| `_symposiumMessages` | `{symposiumId: [{role, name, content, turn, accent}]}` — persisted to `sessionStorage` |
+| `_symposiumTyping` | `{symposiumId: {name, discipline}}` — current speaker, also persisted |
+| `_expertAvatars` | `{expertId: avatarDef}` — generated avatars |
+| `_expertAccents` | `{expertId: colorClass}` — accent colors |
+
+### Critical rules for workspace.js
+
+- **Symposium messages and typing state MUST be stored in `_symposiumMessages` /
+  `_symposiumTyping`, not just the DOM.** When the user navigates away (clicks an
+  expert), `selectExpert()` destroys the `#main-content` DOM entirely. On return,
+  `_renderSymposiumView()` rebuilds everything from the persistent stores.
+- **Capture symposium ID locally in SSE callbacks.** Use `const symId = _activeSymposium`
+  before any `await`. `_activeSymposium` gets set to `null` by `selectExpert()`, so
+  callbacks that reference it directly will write to `_symposiumMessages[null]`.
+- **Call `_persistSymState()` after every mutation** to `_symposiumMessages` or
+  `_symposiumTyping` so state survives page refreshes.
+- **Use session data, not create response, for `_renderSymposiumView()`.** The
+  POST `/api/sessions/{id}/symposia` response only has `{symposium_id, participants}`.
+  Call `refreshSessionData()` then look up the full symposium from `_session.symposia`.
+- **Call `renderSidebar()` + `renderSymposiaList()` after creating a symposium**
+  so it appears in the sidebar without a page refresh.
+
+### Workspace server endpoints (`council.workspace.server`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/sessions` | GET | List all sessions |
+| `/api/sessions` | POST | Create a new session |
+| `/api/sessions/{id}` | GET | Get full session (experts, symposia, messages) |
+| `/api/sessions/{id}/panels` | POST | Moderator proposes experts for a query |
+| `/api/sessions/{id}/experts/{eid}/message` | POST | SSE — chat with an expert |
+| `/api/sessions/{id}/experts/{eid}/pool` | GET | Get expert's knowledge pool |
+| `/api/sessions/{id}/experts/{eid}/sources` | POST | Add source to expert's pool |
+| `/api/sessions/{id}/experts/{eid}/upload` | POST | Upload file to expert's pool |
+| `/api/sessions/{id}/experts/{eid}/opinion` | POST | SSE — form expert opinion |
+| `/api/sessions/{id}/symposia` | POST | Create a symposium |
+| `/api/sessions/{id}/symposia/{sid}/round` | POST | SSE — run a debate round |
+| `/api/sessions/{id}/symposia/{sid}/synthesize` | POST | SSE — synthesize symposium |
+
+## Mission Control GUI architecture (`app.js`)
+
+`gui/app.js` + `gui/index.html` — "Mission Control" (served by `council.server`).
+A 5-phase pipeline dashboard with live SSE and review modes. Run with:
+
+```bash
+uv run python -m council.server               # review mode
+uv run python -m council.server --mode live   # live mode
+```
+
+### Key globals
 
 | Variable | Purpose |
 |---|---|
@@ -116,7 +221,7 @@ const activeBtn = document.querySelector('.nav-btn.active');
 if (activeBtn && activeBtn.dataset.phase === 'expected-phase') { /* mutate */ }
 ```
 
-## Phase animations
+### Phase animations
 
 Each phase has a waiting-state animation that runs via `setInterval` during
 blocking API calls. All timers are cleared in `switchPhase()` before navigating.
