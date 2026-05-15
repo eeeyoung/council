@@ -26,9 +26,6 @@
         <span style="font-size:12px;color:var(--text-dim)">No symposia yet</span>
       </div>
     </div>
-    <div class="sidebar-section" style="margin-top:auto;">
-      <button class="sidebar-btn" onclick="showWorkspaceList()">← Workspaces</button>
-    </div>
   </aside>
 
   <!-- ── Main Panel ───────────────────────────────────────────────────── -->
@@ -45,11 +42,7 @@
 
   <!-- ── Context Panel ─────────────────────────────────────────────────── -->
   <aside id="context-panel" class="collapsed">
-    <div class="context-tabs">
-      <button class="context-tab active" onclick="switchContextTab('evidence',this)">Evidence</button>
-      <button class="context-tab" onclick="switchContextTab('sources',this)">Sources</button>
-      <button class="context-tab" onclick="switchContextTab('synthesis',this)">Synthesis</button>
-    </div>
+    <div class="context-tabs" id="context-tabs"></div>
     <div class="context-content" id="context-content">
       <p style="font-size:12px;color:var(--text-dim)">Select an expert or symposium to see context.</p>
     </div>

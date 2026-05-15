@@ -146,6 +146,7 @@ body {
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  overflow: hidden;
   transition: background 0.15s;
 }
 .panel-group-header:hover { background: rgba(0,0,0,0.04); }
@@ -199,6 +200,12 @@ body {
   cursor: pointer;
   font-size: 12px;
   color: var(--text-muted);
+  overflow: hidden;
+}
+.symposium-item span:last-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .symposium-item:hover { background: rgba(0,0,0,0.04); color: var(--text); }
 
@@ -245,6 +252,10 @@ body {
   font-size: 20px;
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .main-header .header-discipline {
   font-size: 12px;
@@ -412,6 +423,155 @@ body {
   border: 1px solid rgba(196,149,58,0.20);
 }
 
+/* ── Position callout ───────────────────────────────────────────────────── */
+
+.position-callout {
+  background: var(--gold-bg);
+  border-left: 3px solid var(--gold);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.position-callout h2 {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gold);
+  margin: 0 0 4px;
+  padding: 0;
+  border: none;
+}
+.position-callout p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text); }
+
+/* ── Collapsible evidence items ─────────────────────────────────────────── */
+
+/* ── Notion-style section toggles (## level headings) ───────────────────── */
+
+.section-toggle {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 12px 0;
+  overflow: hidden;
+}
+.section-toggle[open] { border-color: var(--border); }
+
+.section-toggle-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+  list-style: none;
+}
+.section-toggle-summary::-webkit-details-marker { display: none; }
+.section-toggle-summary:hover { background: rgba(0,0,0,0.02); }
+
+.section-toggle-chevron {
+  display: inline-block;
+  font-size: 10px;
+  width: 14px;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.section-toggle[open] > .section-toggle-summary .section-toggle-chevron {
+  transform: rotate(90deg);
+}
+
+.section-toggle-body {
+  padding: 0 14px 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.evidence-item {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+/* ── Archive round (symposium history) ──────────────────────────────────── */
+
+.archive-round-summary::-webkit-details-marker { display: none; }
+.archive-round-summary:hover { background: rgba(0,0,0,0.02); }
+.archive-round[open] > .archive-round-summary .archive-round-chevron {
+  transform: rotate(90deg);
+}
+.evidence-item[open] { border-color: var(--border); }
+
+.evidence-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: var(--bg);
+  list-style: none;          /* hide default triangle */
+  user-select: none;
+  transition: background 0.15s;
+}
+.evidence-summary:hover { background: var(--bg-card); }
+.evidence-summary::-webkit-details-marker { display: none; }
+
+.evidence-title {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Twist arrow before title */
+.evidence-summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+  width: 12px;
+  flex-shrink: 0;
+}
+.evidence-item[open] > .evidence-summary::before { transform: rotate(90deg); }
+
+/* Verification pill */
+.verification-pill {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.verification-pill.verified { background: var(--olive-bg); color: var(--olive); }
+.verification-pill.misattributed { background: var(--terracotta-bg); color: var(--terracotta); }
+.verification-pill.unverified { background: rgba(0,0,0,0.05); color: var(--text-dim); }
+
+.evidence-body {
+  padding: 8px 14px 14px;
+  border-top: 1px solid var(--border-light);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.evidence-body h3 { display: none; }     /* title is already in the summary */
+.evidence-body strong { color: var(--text); font-weight: 600; }
+.evidence-body blockquote {
+  border-left: 2px solid var(--border);
+  margin: 6px 0;
+  padding: 4px 12px;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* ── Input Bar ──────────────────────────────────────────────────────────── */
 
 #input-bar {
@@ -538,6 +698,57 @@ body {
 .badge-mini.unverifiable { background: rgba(0,0,0,0.05); color: var(--text-dim); }
 .badge-mini.inference { background: var(--indigo-bg); color: var(--indigo); }
 .badge-mini.position { background: var(--gold-bg); color: var(--gold); }
+
+/* ── Source Sections (Context Panel) ────────────────────────────────────── */
+
+.source-section { margin-bottom: 16px; }
+.source-section.collapsed .source-list { display: none; }
+.source-section.collapsed .collapse-icon { transform: rotate(-90deg); }
+.source-section .collapse-icon {
+  display: inline-block; transition: transform 0.2s; font-size: 10px; width: 12px;
+}
+
+.source-list { padding: 2px 0; }
+
+/* ── Source Block (elongated card) ───────────────────────────────────────── */
+
+.source-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.source-block:hover { box-shadow: var(--shadow-hover); }
+.source-block.discovered { border-left-color: var(--olive); }
+
+.source-block-header {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+}
+.source-icon { font-size: 14px; flex-shrink: 0; }
+.source-title {
+  font-weight: 600; font-size: 12px; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.source-url {
+  font-size: 10px; color: var(--gold); margin-bottom: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.source-preview {
+  font-size: 11px; color: var(--text-dim); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.source-delete-btn {
+  background: none; border: none; color: var(--text-dim);
+  font-size: 13px; cursor: pointer; padding: 2px 4px; line-height: 1;
+  border-radius: 3px; flex-shrink: 0; opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.source-block:hover .source-delete-btn { opacity: 1; }
+.source-delete-btn:hover { color: var(--terracotta); background: var(--terracotta-bg); }
 
 /* ── Workspace List (home view) ─────────────────────────────────────────── */
 
