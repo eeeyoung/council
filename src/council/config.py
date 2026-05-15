@@ -51,6 +51,7 @@ if sys.platform == "win32":
 
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 
 from dotenv import load_dotenv
 

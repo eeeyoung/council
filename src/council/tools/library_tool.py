@@ -176,9 +176,24 @@ def _verify_source(
 
     # ── Quote verification ───────────────────────────────────────────
     if raw_quote:
+        # PRIMARY: fetch the actual page and check the full extracted text
+        page_text = _fetch_and_extract(raw_url)
+        if page_text:
+            check = raw_quote[:80].strip()
+            if check.lower() in page_text.lower():
+                return raw_url, VERIFIED, (
+                    f"Source quote confirmed in full-page text "
+                    f"({len(page_text):,} chars extracted)"
+                )
+            else:
+                return raw_url, MISATTRIBUTED, (
+                    f"Source quote not found in full-page text "
+                    f"({len(page_text):,} chars extracted) — may be misattributed"
+                )
+
+        # FALLBACK: trafilatura failed (paywall/timeout/JS) — try snippet search
         found_url = _search_quote_on_web(raw_quote)
         if found_url:
-            # Check if the found URL matches the claimed URL
             claimed_domain = _extract_domain(raw_url)
             found_domain = _extract_domain(found_url)
             if claimed_domain and found_domain and claimed_domain == found_domain:
@@ -188,8 +203,7 @@ def _verify_source(
                     f"Source quote found on a different source ({found_url}) "
                     f"than claimed ({raw_url}). URL auto-corrected."
                 )
-        else:
-            return raw_url, UNVERIFIABLE, "Source quote not found on the web — it may be fabricated"
+        return raw_url, UNVERIFIABLE, "Source quote not found on the web — it may be fabricated"
     else:
         # No quote — basic URL reachability check
         try:
@@ -214,6 +228,69 @@ def _extract_domain(url: str) -> str:
         return urlparse(url).netloc
     except Exception:
         return ""
+
+
+def _fetch_and_extract(url: str, timeout: int = 10) -> str | None:
+    """Fetch a URL and return extracted plain text via trafilatura.
+
+    Returns None on any failure (paywall, timeout, JS-only, import error)
+    so callers can fall back to snippet-based verification.
+    """
+    try:
+        import trafilatura
+        from trafilatura import extract
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+
+        text = extract(html, output_format="txt", with_metadata=False)
+        return text.strip() if text and len(text.strip()) > 100 else None
+    except Exception:
+        return None
+
+
+def _fetch_and_extract_md(url: str, timeout: int = 10) -> str | None:
+    """Fetch a URL and return extracted markdown via trafilatura.
+
+    Use this for persisting to a knowledge pool so downstream consumers
+    get formatted text with metadata frontmatter.
+    Returns None on any failure.
+    """
+    try:
+        import trafilatura
+        from trafilatura import extract
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+
+        md = extract(html, output_format="markdown", with_metadata=True)
+        return md.strip() if md and len(md.strip()) > 100 else None
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------------ #

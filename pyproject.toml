@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "rich>=14.3.4",
     "tavily-python>=0.7.24",
+    "trafilatura>=2.0.0",
     "uvicorn[standard]>=0.34",
 ]
 
