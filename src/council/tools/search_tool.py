@@ -61,7 +61,10 @@ class WebSearchTool(BaseTool):
     def _tavily_search(self, query: str, max_results: int, api_key: str) -> str:
         try:
             from tavily import TavilyClient
+            import logging
+            _log = logging.getLogger("council.tavily")
 
+            _log.info("🔍 Tavily search | %d results | %r", max_results, query[:100])
             client = TavilyClient(api_key=api_key)
             response = client.search(
                 query=query,
@@ -69,6 +72,7 @@ class WebSearchTool(BaseTool):
                 search_depth="advanced",
                 include_answer=True,
             )
+            _log.info("✓ Tavily returned %d results", len(response.get("results", [])))
 
             lines: list[str] = []
             if response.get("answer"):

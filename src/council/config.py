@@ -14,9 +14,17 @@ import warnings
 
 # Suppress noisy deprecation warnings from CrewAI internals
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="crewai")
+
 import io
 import locale
+import logging
 import os
+
+# Suppress trafilatura/htmldate HTML parsing noise (paywalls, JS-only pages)
+# These log at ERROR level for benign parse failures — silence them completely
+logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
+logging.getLogger("trafilatura.utils").setLevel(logging.CRITICAL)
+logging.getLogger("htmldate").setLevel(logging.CRITICAL)
 import sys
 from pathlib import Path
 

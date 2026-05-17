@@ -80,22 +80,10 @@ UNVERIFIABLE = "unverifiable"
 
 def _search_quote_on_web(quote: str) -> str | None:
     """Search the web for a quote and return the URL where it was found, or None."""
-    # Try DuckDuckGo first (no API key needed)
-    try:
-        from ddgs import DDGS
+    import logging
+    _log = logging.getLogger("council.verify")
 
-        with DDGS() as ddgs:
-            for r in ddgs.text(quote[:200], max_results=3):
-                body = r.get("body", "")
-                href = r.get("href", "")
-                # Check if any significant part of the quote appears in the result
-                check = quote[:80].strip()
-                if check.lower() in body.lower() and href:
-                    return href
-    except Exception:
-        pass
-
-    # Try Tavily if available
+    # Try Tavily first if key is available (better results for academic content)
     try:
         import council.config as cfg
 
@@ -103,6 +91,7 @@ def _search_quote_on_web(quote: str) -> str | None:
         if key:
             from tavily import TavilyClient
 
+            _log.info("🔍 Quote search (Tavily) | %r", quote[:80])
             client = TavilyClient(api_key=key)
             resp = client.search(query=quote[:200], max_results=3, search_depth="advanced")
             for r in resp.get("results", []):
@@ -110,7 +99,26 @@ def _search_quote_on_web(quote: str) -> str | None:
                 url = r.get("url", "")
                 check = quote[:80].strip()
                 if check.lower() in content.lower() and url:
+                    _log.info("✓ Quote found via Tavily → %s", url[:80])
                     return url
+            _log.info("✗ Quote not found via Tavily (%d results checked)", len(resp.get("results", [])))
+            return None  # Tavily is definitive — no fallback needed
+    except Exception:
+        pass
+
+    # Fallback to DuckDuckGo if Tavily key is not set
+    try:
+        from ddgs import DDGS
+
+        _log.info("🔍 Quote search (DuckDuckGo) | %r", quote[:80])
+        with DDGS() as ddgs:
+            for r in ddgs.text(quote[:200], max_results=3):
+                body = r.get("body", "")
+                href = r.get("href", "")
+                check = quote[:80].strip()
+                if check.lower() in body.lower() and href:
+                    _log.info("✓ Quote found via DuckDuckGo → %s", href[:80])
+                    return href
     except Exception:
         pass
 
@@ -120,10 +128,15 @@ def _search_quote_on_web(quote: str) -> str | None:
 def _verify_source(
     source_url: str,
     source_quote: str = "",
+    fast: bool = False,
 ) -> tuple[str, str, str]:
     """
     Verify a source using quote text and web search.
     Never raises — always returns (normalized_url, status, note).
+
+    If fast=True, skips the expensive _search_quote_on_web() fallback and only
+    uses trafilatura page fetch. Use this for batch verification where speed
+    matters more than completeness.
 
     status is one of: "verified", "misattributed", "unverifiable"
     """
@@ -191,7 +204,12 @@ def _verify_source(
                     f"({len(page_text):,} chars extracted) — may be misattributed"
                 )
 
-        # FALLBACK: trafilatura failed (paywall/timeout/JS) — try snippet search
+        # FALLBACK: trafilatura failed (paywall/timeout/JS)
+        if fast:
+            return raw_url, UNVERIFIABLE, (
+                "Could not access page content to verify quote"
+            )
+        # Slow path: try snippet search
         found_url = _search_quote_on_web(raw_quote)
         if found_url:
             claimed_domain = _extract_domain(raw_url)
@@ -231,30 +249,48 @@ def _extract_domain(url: str) -> str:
 
 
 def _fetch_and_extract(url: str, timeout: int = 10) -> str | None:
-    """Fetch a URL and return extracted plain text via trafilatura.
+    """Fetch a URL and return extracted plain text.
 
+    Uses trafilatura for HTML pages, pypdf for PDFs.
     Returns None on any failure (paywall, timeout, JS-only, import error)
     so callers can fall back to snippet-based verification.
     """
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/pdf,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
+        req = urllib.request.Request(url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            data = resp.read()
+
+        # PDF — use pypdf
+        if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+                import io
+                reader = PdfReader(io.BytesIO(data))
+                lines = []
+                for i, page in enumerate(reader.pages[:10]):
+                    text = (page.extract_text() or "").strip()
+                    if text:
+                        lines.append(text)
+                result = "\n\n".join(lines)
+                return result.strip() if len(result.strip()) > 100 else None
+            except Exception:
+                return None
+
+        # HTML — use trafilatura
         import trafilatura
         from trafilatura import extract
-
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/131.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
+        html = data.decode("utf-8", errors="replace")
         text = extract(html, output_format="txt", with_metadata=False)
         return text.strip() if text and len(text.strip()) > 100 else None
     except Exception:
@@ -262,31 +298,47 @@ def _fetch_and_extract(url: str, timeout: int = 10) -> str | None:
 
 
 def _fetch_and_extract_md(url: str, timeout: int = 10) -> str | None:
-    """Fetch a URL and return extracted markdown via trafilatura.
+    """Fetch a URL and return extracted markdown.
 
-    Use this for persisting to a knowledge pool so downstream consumers
-    get formatted text with metadata frontmatter.
+    Uses trafilatura for HTML pages, pypdf for PDFs.
     Returns None on any failure.
     """
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/pdf,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
+        req = urllib.request.Request(url, headers=_HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            data = resp.read()
+
+        # PDF — first 10 pages as markdown-ish text
+        if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+                import io
+                reader = PdfReader(io.BytesIO(data))
+                lines = [f"# PDF: {url}\n"]
+                for i, page in enumerate(reader.pages[:10]):
+                    text = (page.extract_text() or "").strip()
+                    if text:
+                        lines.append(f"## Page {i + 1}\n{text}")
+                result = "\n\n".join(lines)
+                return result.strip() if len(result.strip()) > 100 else None
+            except Exception:
+                return None
+
+        # HTML — use trafilatura
         import trafilatura
         from trafilatura import extract
-
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/131.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
+        html = data.decode("utf-8", errors="replace")
         md = extract(html, output_format="markdown", with_metadata=True)
         return md.strip() if md and len(md.strip()) > 100 else None
     except Exception:
