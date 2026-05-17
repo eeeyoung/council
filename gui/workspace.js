@@ -67,7 +67,7 @@ async function initApp() {
   await refreshSessionData();
   assignExpertAttributes();
   hydrateSymposiumMessages();
-  document.getElementById('sidebar-ws-name').textContent = 'COUNCIL Workspace';
+  document.getElementById('sidebar-ws-name').textContent = 'SYMPOSIUM Workspace';
   renderSidebar();
   renderSymposiaList();
   showEmptyState();
@@ -162,7 +162,7 @@ function renderSidebar() {
         <span class="collapse-icon">${collapsed ? '▶' : '▼'}</span>${esc(truncate(panel.name || 'Panel ' + (pi+1), 50))}
         <span style="margin-left:auto;font-size:10px;color:var(--text-dim);">${(panel.experts||[]).length} experts</span>
         ${_panelEditMode ? `<span onclick="event.stopPropagation();removePanel('${panel.id}')" style="cursor:pointer;margin-left:4px;color:var(--terracotta);font-size:12px;opacity:0.7;" title="Remove panel">✕</span>` : ''}
-        <span onclick="event.stopPropagation();togglePanelEditMode()" style="cursor:pointer;margin-left:6px;font-size:12px;opacity:0.4;${_panelEditMode?'color:var(--terracotta);':''}" title="${_panelEditMode?'Done editing':'Edit panels'}">${_panelEditMode ? '✓' : '✎'}</span>
+        <span onclick="event.stopPropagation();showPanelEditModal('${panel.id}')" style="cursor:pointer;margin-left:6px;font-size:12px;opacity:0.4;" title="Edit panel">✎</span>
       </div>
       <div class="panel-experts" id="panel-${pi}-experts" style="${collapsed ? 'display:none' : ''}">`;
     (panel.experts || []).forEach(expert => {
@@ -361,7 +361,10 @@ async function sendMessage() {
         if (et === 'message') {
           if (typing) typing.remove();
           dismissToast(tid);
-          appendMessage('agent', data.name, data.content, _expertAccents[_activeExpert?.id] || 'gold', data.turn);
+          // Only append if user is still viewing this expert
+          if (_activeExpert && document.getElementById('conversation')) {
+            appendMessage('agent', data.name, data.content, _expertAccents[_activeExpert.id] || 'gold', data.turn);
+          }
           toast(`${data.name} responded`, 'success');
         }
       }
@@ -635,74 +638,71 @@ async function runExpertResearch() {
   if (_researchAbortCtrl) { _researchAbortCtrl.abort(); }
   _researchAbortCtrl = new AbortController();
 
-  toast(`${_activeExpert.name} is researching…`, 'loading');
+  var tid = toast(`${_activeExpert.name} is researching…`, 'loading');
 
   // Render the library tab (if not already visible) so existing sources stay in view
   await renderContextPanel('library');
 
   // Append progress display at the bottom of the Discovered section
-  const progressHtml = `<div id="research-progress" style="text-align:center;padding:14px 0 8px;border-top:1px solid var(--border-light);margin-top:8px;">
+  var progressHtml = `<div id="research-progress" style="text-align:center;padding:14px 0 8px;border-top:1px solid var(--border-light);margin-top:8px;">
     <div class="spinner" style="margin:0 auto 10px;"></div>
     <p style="font-size:13px;color:var(--text-muted);">Searching for sources…</p>
     <p style="font-size:11px;color:var(--text-dim);" id="research-counter">Verified: 0 / ${target}</p>
     <p style="font-size:10px;color:var(--text-dim);" id="research-status"></p>
   </div>`;
-  const discovered = document.getElementById('discovered-sources');
+  var discovered = document.getElementById('discovered-sources');
   if (discovered) {
-    const existing = document.getElementById('research-progress');
+    var existing = document.getElementById('research-progress');
     if (existing) existing.remove();
     discovered.insertAdjacentHTML('beforeend', progressHtml);
   }
 
   try {
     await streamSSE(
-      `${API}/panels/${_expertPanelMap[_activeExpert.id]}/experts/${_activeExpert.id}/research`,
+      API + '/panels/' + _expertPanelMap[_activeExpert.id] + '/experts/' + _activeExpert.id + '/research',
       { method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({target_sources:target, time_limit_seconds:timeout}),
         signal: _researchAbortCtrl.signal },
-      (et, data) => {
+      function(et, data) {
         if (et === 'source_found') {
-          const counter = document.getElementById('research-counter');
-          const status = document.getElementById('research-status');
-          if (counter) counter.textContent = `Verified: ${data.verified_count} / ${data.target} (${data.total_found} found, ${Math.round(data.elapsed)}s)`;
-          if (status) {
-            const icon = data.status === 'verified' ? '✓' : '✗';
-            status.textContent = `${icon} ${data.title ? data.title.substring(0,80) : 'Source'} — ${data.status}`;
+          var counter = document.getElementById('research-counter');
+          var st = document.getElementById('research-status');
+          if (counter) counter.textContent = 'Verified: ' + data.verified_count + ' / ' + data.target + ' (' + data.total_found + ' found, ' + Math.round(data.elapsed) + 's)';
+          if (st) {
+            var icon = data.status === 'verified' ? '✓' : '✗';
+            st.textContent = icon + ' ' + (data.title ? data.title.substring(0,80) : 'Source') + ' — ' + data.status;
           }
+          updateToast(tid, 'Verified: ' + data.verified_count + ' / ' + data.target, 'loading');
           // Append source block to Discovered section in real time
           if (data.source_id) {
-            const discoveredList = document.querySelector('#discovered-sources .source-list');
+            var discoveredList = document.querySelector('#discovered-sources .source-list');
             if (discoveredList) {
-              const placeholder = discoveredList.querySelector('p');
+              var placeholder = discoveredList.querySelector('p');
               if (placeholder) placeholder.remove();
-              const block = _renderSourceBlock({
-                id: data.source_id,
-                title: data.title,
-                url: data.url || '',
-                snippet: data.snippet || '',
-                source_type: 'url',
-                origin: 'discovered',
-                verification_status: data.status,
-                full_text_preview: '',
+              var block = _renderSourceBlock({
+                id: data.source_id, title: data.title, url: data.url || '',
+                snippet: data.snippet || '', source_type: 'url',
+                origin: 'discovered', verification_status: data.status, full_text_preview: '',
               });
-              // Avoid duplicates if the same event fires twice
-              if (!discoveredList.querySelector(`[data-source-id="${data.source_id}"]`)) {
+              if (!discoveredList.querySelector('[data-source-id="' + data.source_id + '"]')) {
                 discoveredList.insertAdjacentHTML('beforeend', block);
               }
             }
           }
         } else if (et === 'research_complete') {
-          toast(`Research done — ${data.verified} verified, ${data.rejected || 0} rejected (${Math.round(data.elapsed)}s)`, 'success');
+          dismissToast(tid);
+          toast('Research done — ' + data.verified + ' verified, ' + (data.rejected || 0) + ' rejected (' + Math.round(data.elapsed) + 's)', 'success');
           if (_activeExpert) renderContextPanel('library');
         }
       }
     );
   } catch(e) {
+    dismissToast(tid);
     if (e.name !== 'AbortError') toast('Research failed: ' + e.message, 'error');
     if (_activeExpert) renderContextPanel('library');
   }
   _researchAbortCtrl = null;
-  // Clean up progress bar if still present (e.g. after abort)
+  // Clean up progress bar if still present
   var _rp = document.getElementById('research-progress');
   if (_rp) _rp.remove();
 }
@@ -875,7 +875,7 @@ function _renderSourceBlock(s) {
   const icons = {url:'🌐', pdf:'📄', doc:'📄', txt:'📃'};
   const icon = icons[s.source_type] || '📎';
   const preview = (s.snippet || s.full_text_preview || '').substring(0, 120);
-  const badge = s.origin === 'discovered' ? statusBadge(s.verification_status) : '';
+  const badge = statusBadge(s.id, s.verification_status);
   const onClick = s.source_type === 'url' && s.url
     ? `onclick="window.open('${escAttr(s.url)}','_blank','noopener')"`
     : `onclick="fetchFullSourceText('${escAttr(s.id)}')"`;
@@ -961,10 +961,28 @@ async function saveExpertProfile(expertId) {
   }
 }
 
-function statusBadge(s) {
-  if (!s) return '<span class="badge-mini unverifiable">pending</span>';
-  const m = {verified:'verified',misattributed:'misattributed',unverifiable:'unverifiable'};
-  return `<span class="badge-mini ${m[s]||'unverifiable'}">${s}</span>`;
+function statusBadge(sourceId, currentStatus) {
+  var status = currentStatus || '';
+  if (!status) return '<span class="badge-mini unverifiable">pending</span>';
+  var m = {verified:'verified',misattributed:'misattributed',unverifiable:'unverifiable'};
+  return '<span class="badge-mini ' + (m[status]||'unverifiable') + ' badge-clickable" onclick="event.stopPropagation();cycleSourceStatus(\'' + sourceId + '\',\'' + status + '\')" title="Click to change">' + esc(status) + '</span>';
+}
+
+async function cycleSourceStatus(sourceId, currentStatus) {
+  if (!_activeExpert) return;
+  var next = {verified:'misattributed', misattributed:'unverifiable', unverifiable:'verified'};
+  var newStatus = next[currentStatus] || 'verified';
+  var panelId = _expertPanelMap[_activeExpert.id];
+  if (!panelId) return;
+  try {
+    var resp = await fetch(API + '/panels/' + panelId + '/experts/' + _activeExpert.id + '/sources/' + sourceId, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({verification_status:newStatus}),
+    });
+    if (!resp.ok) throw new Error('Failed');
+    renderContextPanel('library');
+    toast('Source marked as ' + newStatus, 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
 }
 
 // ── Symposium ───────────────────────────────────────────────────────────────
@@ -1172,8 +1190,8 @@ async function runSymposiumRound() {
             accent: accent, turn: data.turn,
           });
           _persistSymState();
-          // Also append to DOM if conversation is visible
-          if (document.getElementById('conversation')) {
+          // Only append to DOM if user is viewing THIS symposium
+          if (_activeSymposium === symId && document.getElementById('conversation')) {
             appendMessage('agent', data.name, data.content, accent, data.turn);
           }
         } else if (et === 'round_complete') {
@@ -1313,6 +1331,146 @@ async function addExperts() {
   const data = await resp.json();
   await refreshSessionData();
   toast(`Experts added: ${data.experts?.length||0}`, 'success');
+}
+
+function showPanelEditModal(panelId) {
+  var panel = _session.panels.find(function(p) { return p.id === panelId; });
+  if (!panel) return;
+
+  var expertsHtml = '';
+  (panel.experts || []).forEach(function(e) {
+    expertsHtml += '<div class="edit-expert-row">' +
+      '<div class="edit-expert-info">' +
+      '<span class="edit-expert-name">' + esc(e.name) + '</span>' +
+      '<span class="edit-expert-discipline">' + esc(e.discipline) + '</span>' +
+      (e.bias ? '<span class="edit-expert-bias">' + esc(e.bias) + '</span>' : '') +
+      '</div>' +
+      '<button class="edit-expert-remove" onclick="removeExpertFromPanel(\'' + panelId + '\',\'' + e.id + '\')" title="Remove expert">✕</button>' +
+      '</div>';
+  });
+  if (!panel.experts || !panel.experts.length) {
+    expertsHtml = '<p style="font-size:12px;color:var(--text-dim);padding:8px 0;">No experts on this panel.</p>';
+  }
+
+  showModal(
+    '<h3>Edit Panel</h3>' +
+    '<div style="margin-bottom:12px;">' +
+    '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-dim);">Panel Name (sidebar display)</label>' +
+    '<input id="edit-panel-name" value="' + escAttr(panel.name || '') + '" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:var(--font-body);">' +
+    '</div>' +
+    '<div style="margin-bottom:12px;">' +
+    '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-dim);">Research Question</label>' +
+    '<textarea id="edit-panel-query" rows="3" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:var(--font-body);resize:vertical;">' + esc(panel.query || '') + '</textarea>' +
+    '</div>' +
+    '<div style="margin-bottom:12px;">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+    '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-dim);">Experts (' + (panel.experts||[]).length + ')</span>' +
+    '<button class="modal-btn secondary" style="font-size:11px;padding:4px 10px;" onclick="proposeExpertForPanel(\'' + panelId + '\')">+ Add Expert</button>' +
+    '</div>' +
+    expertsHtml +
+    '</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">' +
+    '<button class="modal-btn secondary" style="flex:1;" onclick="polishPanelQuery(\'' + panelId + '\')">✨ Polish Query</button>' +
+    '<button class="modal-btn secondary" style="flex:1;" onclick="regeneratePanelExperts(\'' + panelId + '\')">🔄 Regenerate All</button>' +
+    '</div>' +
+    '<div class="modal-actions">' +
+    '<button class="modal-btn danger" onclick="removePanel(\'' + panelId + '\');closeModal();">Remove Panel</button>' +
+    '<button class="modal-btn secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="modal-btn primary" onclick="savePanelEdits(\'' + panelId + '\')">💾 Save</button>' +
+    '</div>'
+  );
+}
+
+async function savePanelEdits(panelId) {
+  var name = document.getElementById('edit-panel-name')?.value?.trim() || '';
+  var query = document.getElementById('edit-panel-query')?.value?.trim() || '';
+  try {
+    var resp = await fetch(API + '/panels/' + panelId, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name||null, query:query||null}),
+    });
+    if (!resp.ok) throw new Error('Failed');
+    closeModal();
+    await refreshSessionData();
+    toast('Panel updated', 'success');
+  } catch(e) { toast('Failed to save panel: ' + e.message, 'error'); }
+}
+
+async function polishPanelQuery(panelId) {
+  var panel = _session.panels.find(function(p) { return p.id === panelId; });
+  var query = document.getElementById('edit-panel-query')?.value?.trim() || panel.query;
+  if (!query) { toast('Enter a research question first', 'error'); return; }
+  var btn = document.querySelector('[onclick*="polishPanelQuery"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Polishing…'; }
+  try {
+    var resp = await fetch(API + '/polish-query', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:query}),
+    });
+    var data = await resp.json();
+    var ta = document.getElementById('edit-panel-query');
+    if (ta) ta.value = data.polished;
+    toast('Query polished!', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = '✨ Polish Query'; }
+}
+
+async function proposeExpertForPanel(panelId) {
+  var panel = _session.panels.find(function(p) { return p.id === panelId; });
+  var query = document.getElementById('edit-panel-query')?.value?.trim() || panel.query;
+  var existing = (panel.experts || []).map(function(e) { return {name:e.name, discipline:e.discipline, bias:e.bias}; });
+  var btn = document.querySelector('[onclick*="proposeExpertForPanel"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking…'; }
+  try {
+    var resp = await fetch(API + '/propose-expert', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:query, existing_experts:existing}),
+    });
+    var data = await resp.json();
+    if (!data.expert) { toast('Could not propose an expert', 'error'); return; }
+    // Add the expert to the panel
+    var ar = await fetch(API + '/panels/' + panelId + '/experts', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(data.expert),
+    });
+    if (!ar.ok) throw new Error('Failed to add');
+    closeModal();
+    await refreshSessionData();
+    toast('Expert added: ' + data.expert.name, 'success');
+    // Re-open the modal with fresh data
+    showPanelEditModal(panelId);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = '+ Add Expert'; }
+}
+
+async function removeExpertFromPanel(panelId, expertId) {
+  try {
+    var resp = await fetch(API + '/panels/' + panelId + '/experts/' + expertId, { method:'DELETE' });
+    if (!resp.ok) throw new Error('Failed');
+    closeModal();
+    await refreshSessionData();
+    toast('Expert removed', 'success');
+    showPanelEditModal(panelId);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function regeneratePanelExperts(panelId) {
+  var panel = _session.panels.find(function(p) { return p.id === panelId; });
+  var query = document.getElementById('edit-panel-query')?.value?.trim() || panel.query;
+  if (!confirm('Replace ALL experts on this panel with newly generated ones?')) return;
+  var btn = document.querySelector('[onclick*="regeneratePanelExperts"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Regenerating…'; }
+  try {
+    var resp = await fetch(API + '/panels/' + panelId + '/regenerate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:query, max_experts:3}),
+    });
+    if (!resp.ok) throw new Error('Failed');
+    closeModal();
+    await refreshSessionData();
+    toast('Panel regenerated', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate All'; }
 }
 
 function showModal(html) {

@@ -1,4 +1,4 @@
-/* ── COUNCIL Workspace — The Academy ───────────────────────────────────── */
+/* ── SYMPOSIUM Workspace — The Academy ───────────────────────────────────── */
 
 /* ── Variables ─────────────────────────────────────────────────────────── */
 
@@ -131,7 +131,12 @@ body {
   color: var(--text-dim);
   margin-bottom: 10px;
   font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
 }
+.panels-edit-toggle {
+  cursor: pointer; font-size: 12px; opacity: 0.4; transition: opacity 0.15s;
+}
+.panels-edit-toggle:hover { opacity: 0.8; }
 
 /* Panel tree */
 .panel-group { margin-bottom: 8px; }
@@ -698,6 +703,8 @@ body {
 .badge-mini.unverifiable { background: rgba(0,0,0,0.05); color: var(--text-dim); }
 .badge-mini.inference { background: var(--indigo-bg); color: var(--indigo); }
 .badge-mini.position { background: var(--gold-bg); color: var(--gold); }
+.badge-clickable { cursor: pointer; transition: opacity 0.15s; }
+.badge-clickable:hover { opacity: 0.7; }
 
 /* ── Source Sections (Context Panel) ────────────────────────────────────── */
 
@@ -860,6 +867,26 @@ body {
 .modal-btn.primary:hover { background: #b08030; }
 .modal-btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
 .modal-btn.secondary:hover { border-color: var(--gold); color: var(--gold); }
+.modal-btn.danger { background: transparent; border: 1px solid var(--terracotta); color: var(--terracotta); }
+.modal-btn.danger:hover { background: var(--terracotta-bg); }
+
+/* Edit expert rows */
+.edit-expert-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; margin-bottom: 4px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.edit-expert-info { flex: 1; min-width: 0; }
+.edit-expert-name { font-weight: 600; display: block; }
+.edit-expert-discipline { font-size: 11px; color: var(--text-muted); }
+.edit-expert-bias { font-size: 10px; color: var(--text-dim); display: block; }
+.edit-expert-remove {
+  background: none; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 3px;
+  flex-shrink: 0; transition: color 0.15s;
+}
+.edit-expert-remove:hover { color: var(--terracotta); }
 
 /* ── Toasts ─────────────────────────────────────────────────────────────── */
 
