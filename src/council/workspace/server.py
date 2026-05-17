@@ -32,9 +32,10 @@ from council.workspace.agents import (
     add_source_to_expert,
     expert_respond,
     expert_research,
-    fact_check_source,
     form_opinion,
     moderator_propose_panel,
+    polish_query,
+    propose_expert,
     rapporteur_synthesize,
     upload_file_to_expert,
 )
@@ -153,6 +154,26 @@ class VerifySourceRequest(BaseModel):
     url: str = ""
     quote: str = ""
     claim: str = ""
+
+
+class PolishQueryRequest(BaseModel):
+    query: str
+
+
+class ProposeExpertRequest(BaseModel):
+    query: str
+    existing_experts: list[dict] = []
+
+
+class AddExpertRequest(BaseModel):
+    name: str
+    discipline: str = ""
+    bias: str = ""
+    persona_prompt: str = ""
+
+
+class UpdateSourceRequest(BaseModel):
+    verification_status: str  # "verified" | "misattributed" | "unverifiable"
 
 
 # ── Session (singleton) ─────────────────────────────────────────────────────
@@ -359,6 +380,46 @@ def regenerate_panel(panel_id: str, req: CreatePanelRequest):
     }
 
 
+@app.delete("/api/panels/{panel_id}/experts/{expert_id}")
+def delete_expert(panel_id: str, expert_id: str):
+    """Remove a single expert from a panel."""
+    ws = _get_session()
+    panel = ws.get_panel(panel_id)
+    if not panel:
+        raise HTTPException(404, f"Panel '{panel_id}' not found")
+    for i, e in enumerate(panel.experts):
+        if e.id == expert_id:
+            removed = panel.experts.pop(i)
+            save(ws)
+            log.info("[panel] DELETE …/experts/%s → removed %s from %s", expert_id[:8], removed.name, panel_id)
+            return {"ok": True, "removed": removed.name}
+    raise HTTPException(404, f"Expert '{expert_id}' not found in panel")
+
+
+@app.post("/api/panels/{panel_id}/experts")
+def add_expert_to_panel(panel_id: str, req: AddExpertRequest):
+    """Add a single expert to a panel."""
+    ws = _get_session()
+    panel = ws.get_panel(panel_id)
+    if not panel:
+        raise HTTPException(404, f"Panel '{panel_id}' not found")
+    from council.workspace.state import Expert
+    expert = Expert(
+        name=req.name,
+        discipline=req.discipline,
+        bias=req.bias,
+        persona_prompt=req.persona_prompt,
+    )
+    panel.experts.append(expert)
+    save(ws)
+    log.info("[panel] POST …/experts → added %s (%s) to %s", expert.name, expert.discipline, panel_id)
+    return {
+        "expert_id": expert.id,
+        "name": expert.name,
+        "discipline": expert.discipline,
+    }
+
+
 # ── Experts ─────────────────────────────────────────────────────────────────
 
 @app.put("/api/panels/{panel_id}/experts/{expert_id}")
@@ -427,6 +488,21 @@ def get_source_full_text(panel_id: str, expert_id: str, source_id: str):
                 "full_text": s.full_text,
                 "source_type": s.source_type,
             }
+    raise HTTPException(404, "Source not found")
+
+
+@app.patch("/api/panels/{panel_id}/experts/{expert_id}/sources/{source_id}")
+def update_source_status(panel_id: str, expert_id: str, source_id: str, req: UpdateSourceRequest):
+    """Update a source's verification status. User can override the fact-checker."""
+    ws = _get_session()
+    expert = _find_expert(ws, expert_id)
+    for s in expert.knowledge_pool.sources:
+        if s.id == source_id:
+            s.verification_status = req.verification_status
+            s.type = "verified" if req.verification_status == "verified" else s.type
+            save(ws)
+            log.info("[source] status updated %s → %s by user", source_id[:8], req.verification_status)
+            return {"ok": True, "verification_status": s.verification_status}
     raise HTTPException(404, "Source not found")
 
 
@@ -593,7 +669,7 @@ async def expert_research_endpoint(panel_id: str, expert_id: str, req: ResearchR
         while verified_count < target and time.time() < deadline:
             remaining = time.time() - deadline
             # Build research goal instructing the expert to find one source, avoiding rejects and duplicates
-            goal = f"Find ONE high-quality, citable source about: {query or req.research_goal}. "
+            goal = f"Find 3-5 high-quality, citable sources about: {query or req.research_goal}. Return ALL sources you find — the Fact-Checker will verify each one. "
             if existing_urls:
                 goal += f"DO NOT find these already-in-library URLs: {'; '.join(list(existing_urls)[-10:])}. "
             if rejected_titles:
@@ -612,28 +688,30 @@ async def expert_research_endpoint(panel_id: str, expert_id: str, req: ResearchR
                     break
                 total_found += 1
 
-                # Fact-check the source
-                checked = await asyncio.to_thread(fact_check_source, src)
-                status = checked.verification_status or "unverifiable"
+                status = src.verification_status or "unverifiable"
 
-                if status == "verified":
+                if status in ("verified", "misattributed"):
                     # Enrich with trafilatura full-text extraction (best-effort)
-                    if checked.url:
+                    if src.url:
                         try:
-                            md = await asyncio.to_thread(_fetch_and_extract_md, checked.url, 10)
+                            md = await asyncio.to_thread(_fetch_and_extract_md, src.url, 10)
                             if md:
-                                checked.full_text = md
+                                src.full_text = md
                         except Exception:
                             pass
-                    expert.knowledge_pool.sources.append(checked)
-                    verified_count += 1
-                    log.info("[research] %s: ✓ verified #%d — %s", expert.name, verified_count, (checked.title or checked.url)[:60])
+                    expert.knowledge_pool.sources.append(src)
+                    if status == "verified":
+                        verified_count += 1
+                    # Refresh dedup set
+                    if src.url:
+                        existing_urls.add(src.url)
+                    log.info("[research] %s: ✓ %s — %s", expert.name, status, (src.title or src.url)[:60])
                     yield sse_event("source_found", {
-                        "source_id": checked.id,
-                        "title": checked.title or checked.url,
-                        "url": checked.url,
-                        "snippet": (checked.snippet or "")[:200],
-                        "status": "verified",
+                        "source_id": src.id,
+                        "title": src.title or src.url,
+                        "url": src.url,
+                        "snippet": (src.snippet or "")[:200],
+                        "status": status,
                         "verified_count": verified_count,
                         "total_found": total_found,
                         "target": target,
@@ -641,13 +719,13 @@ async def expert_research_endpoint(panel_id: str, expert_id: str, req: ResearchR
                     })
                 else:
                     rejected += 1
-                    rejected_titles.append(checked.title or checked.url or '?')
-                    log.info("[research] %s: ✗ %s — %s", expert.name, status, (checked.title or checked.url)[:60])
+                    rejected_titles.append(src.title or src.url or '?')
+                    log.info("[research] %s: ✗ %s — %s", expert.name, status, (src.title or src.url)[:60])
                     yield sse_event("source_found", {
-                        "source_id": checked.id,
-                        "title": checked.title or checked.url,
-                        "url": checked.url,
-                        "snippet": (checked.snippet or "")[:200],
+                        "source_id": src.id,
+                        "title": src.title or src.url,
+                        "url": src.url,
+                        "snippet": (src.snippet or "")[:200],
                         "status": status,
                         "verified_count": verified_count,
                         "total_found": total_found,
@@ -1006,6 +1084,32 @@ def verify_source_endpoint(req: VerifySourceRequest):
             result["extracted_md_length"] = len(md)
 
     return result
+
+
+# ── Panel editing helpers ─────────────────────────────────────────────────────
+
+
+@app.post("/api/polish-query")
+def polish_query_endpoint(req: PolishQueryRequest):
+    """Refine a research question using an LLM. Stateless."""
+    t0 = time.time()
+    polished = polish_query(req.query)
+    elapsed = round(time.time() - t0, 2)
+    log.info("[polish] POST /api/polish-query → %d→%d chars (%.2fs)",
+             len(req.query), len(polished), elapsed)
+    return {"original": req.query, "polished": polished, "elapsed": elapsed}
+
+
+@app.post("/api/propose-expert")
+def propose_expert_endpoint(req: ProposeExpertRequest):
+    """Propose a single gap-filling expert for a panel. Stateless."""
+    t0 = time.time()
+    result = propose_expert(query=req.query, existing_experts=req.existing_experts)
+    elapsed = round(time.time() - t0, 2)
+    if result:
+        log.info("[propose] POST /api/propose-expert → %s (%s) (%.2fs)",
+                 result["name"], result["discipline"], elapsed)
+    return {"expert": result, "elapsed": elapsed}
 
 
 # ── GUI static files ────────────────────────────────────────────────────────
