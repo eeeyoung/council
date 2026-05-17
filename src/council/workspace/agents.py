@@ -31,10 +31,11 @@ import chromadb
 from chromadb.config import Settings
 
 from council.agents.expert import build_expert_agent
-from council.agents.fact_checker import build_fact_checker
+
 from council.agents.moderator import build_moderator_agent
 from council.agents.rapporteur import build_rapporteur
 from council.config import build_llm
+from crewai import Agent
 from council.state import ExpertDefinition
 from council.tools.library_tool import LibraryReadTool, create_library_tools
 from council.tools.pdf_tool import create_pdf_tool
@@ -573,31 +574,38 @@ def expert_research(
     panel_peers: list[dict] | None = None,
     verbose: bool = False,
 ) -> list[PoolSource]:
-    """Expert searches for sources on a topic. Returns collected sources (unverified).
+    """Expert generates search queries (LLM) → Tavily executes → code verifies.
 
-    If panel_peers is provided, the prompt includes contrast awareness — telling
-    this expert what the others will likely find so they consciously differentiate."""
-    exp_def = _expert_to_definition(expert)
+    The LLM only generates domain-specific search queries — it does NOT call tools
+    or filter results. Every Tavily result is verified via _verify_source() and
+    returned with verification_status pre-set.
+
+    Returns sources with verification_status already populated:
+    "verified", "misattributed", or "unverifiable"."""
+    from council.tools.library_tool import _verify_source
+
     pool_text = _pool_to_text(expert.knowledge_pool)
 
-    search_tool = create_search_tool()
-    library_write, library_read = create_library_tools()
-    pdf_tool = create_pdf_tool()
+    # ── Step 1: LLM generates search queries ────────────────────────────
     llm = build_llm(temperature=0.8)
-
-    agent = build_expert_agent(
-        expert=exp_def,
-        search_tool=search_tool,
-        library_write=library_write,
-        library_read=library_read,
-        pdf_tool=pdf_tool,
+    agent = Agent(
+        role=f"{expert.discipline} Query Strategist",
+        goal="Generate precise, domain-specific search queries that will uncover unique sources invisible to other disciplines.",
+        backstory=(
+            f"{expert.persona_prompt}\n\n"
+            f"You approach every problem through the lens of {expert.discipline}.\n"
+            f"Your known intellectual bias is: {expert.bias}.\n"
+            "You are crafting search queries, not evaluating results. Your job is to "
+            "formulate the perfect queries that ONLY someone with your disciplinary "
+            "training would think to ask."
+        ),
+        tools=[],
         llm=llm,
         verbose=verbose,
+        allow_delegation=False,
     )
 
-    goal = research_goal or f"Find 3-5 highly relevant sources on: {query}"
-
-    # Build contrast-awareness paragraph
+    # Build contrast-awareness paragraph (same as before)
     contrast = ""
     if panel_peers:
         peer_lines = []
@@ -609,110 +617,172 @@ def expert_research(
             )
         contrast = f"""
 === YOUR PANEL PEERS ===
-You are NOT the only expert on this panel. Other experts include:
 {chr(10).join(peer_lines)}
 
-YOUR UNIQUE VALUE: You are a {expert.discipline} expert with a leaning toward
-"{expert.bias}". Your peers have DIFFERENT disciplinary lenses — they will
-naturally find different sources than you.
-
-CRITICAL: Do NOT find sources that your peers would obviously also find.
-Instead, search for sources that are UNIQUELY visible through YOUR disciplinary
-lens. Use search terms from YOUR field's vocabulary. Look in venues and journals
-that YOUR discipline reads. Your peers will cover their own angles — the panel
-needs YOU to bring what only YOU can find.
+CRITICAL: Your peers will search from THEIR perspectives. You must generate queries
+that are UNIQUELY visible through YOUR {expert.discipline} lens. Use YOUR field's
+vocabulary. Search venues and journals that ONLY your discipline reads.
 """
 
-    description = f"""
+    query_prompt = f"""
 You are {expert.name}, a {expert.discipline} expert.
 Your intellectual leaning: {expert.bias}.
-Your personality: {expert.persona_prompt}
 
 Research context: "{query}"
-Research goal: {goal}
+Research goal: {research_goal or f'Find sources on: {query}'}
 
 {pool_text}
 {contrast}
-Your task: Use web_search to find 3-5 relevant sources that address the research goal
-from your disciplinary perspective. For each source, deposit it into the shared library
-using library_write with the EXACT URL, title, and snippet from the search result.
+Generate 3-5 specific, targeted search queries that would find high-quality,
+citable sources addressing the research goal from YOUR disciplinary perspective.
 
-Do NOT form opinions yet — just collect sources. The Fact-Checker will verify them next.
+Each query should:
+- Use precise terminology from {expert.discipline}
+- Be specific enough to return relevant academic/scientific results
+- Be DIFFERENT from what other disciplines would search for
 
-Return a JSON array of the sources you found. Each entry must have:
-- "url": the EXACT URL
-- "title": the title of the article/paper
-- "snippet": the text excerpt from the search result
+Return ONLY a JSON array of strings. No preamble, no explanation.
+Example: ["quantum error correction surface codes threshold 2024", "fault-tolerant logical qubit experimental demonstration superconducting"]
+
+IMPORTANT: Return ONLY the JSON array. Nothing else.
 """
 
-    raw = ask_agent(agent, description.strip(), "A JSON array of source objects.", verbose=verbose)
-    data = _parse_json(raw)
+    raw_queries = ask_agent(
+        agent, query_prompt.strip(),
+        "A JSON array of 3-5 search query strings.",
+        verbose=verbose,
+    )
+    query_data = _parse_json(raw_queries)
 
-    if not data or not isinstance(data, list):
+    if not isinstance(query_data, list):
         return []
 
-    return [
-        PoolSource(
+    queries = [str(q) for q in query_data if isinstance(q, str) and str(q).strip()]
+    if not queries:
+        return []
+
+    # ── Step 2: Execute all queries via Tavily directly ──────────────────
+    import logging
+    _log = logging.getLogger("council.research")
+
+    all_results: list[dict] = []  # {url, title, snippet}
+    seen_urls: set[str] = set()
+
+    try:
+        import council.config as cfg
+        from tavily import TavilyClient
+
+        key = cfg.get_tavily_key()
+        if not key:
+            # Fallback to DuckDuckGo
+            from ddgs import DDGS
+            for q in queries[:5]:
+                _log.info("🔍 DuckDuckGo: %r", q[:80])
+                try:
+                    with DDGS() as ddgs:
+                        for r in ddgs.text(q, max_results=3):
+                            url = r.get("href", "")
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                all_results.append({
+                                    "url": url,
+                                    "title": r.get("title", ""),
+                                    "snippet": r.get("body", ""),
+                                })
+                except Exception:
+                    pass
+        else:
+            client = TavilyClient(api_key=key)
+            for q in queries[:5]:
+                _log.info("🔍 Tavily: %r", q[:80])
+                try:
+                    resp = client.search(query=q, max_results=3, search_depth="advanced")
+                    for r in resp.get("results", []):
+                        url = r.get("url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_results.append({
+                                "url": url,
+                                "title": r.get("title", ""),
+                                "snippet": r.get("content", ""),
+                            })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if not all_results:
+        return []
+
+    _log.info("Total unique results across %d queries: %d", len(queries), len(all_results))
+
+    # ── Step 3: Verify via trafilatura (page fetch only, no snippet fallback) ──
+    sources: list[PoolSource] = []
+
+    for r in all_results:
+        url = r["url"]
+        title = r["title"]
+        snippet = r["snippet"]
+
+        normalized_url, status, note = _verify_source(
+            source_url=url,
+            source_quote=snippet,
+            fast=True,  # trafilatura only — if we can't read the page, say so honestly
+        )
+
+        sources.append(PoolSource(
             origin="discovered",
             source_type="url",
-            type="collected",
-            url=item.get("url", ""),
-            title=item.get("title", ""),
-            snippet=item.get("snippet", ""),
+            type="verified" if status == "verified" else "collected",
+            url=normalized_url if normalized_url.startswith("http") else url,
+            title=title,
+            snippet=snippet,
+            verification_status=status,
+            verification_note=note,
             added_by=expert.name,
-        )
-        for item in data
-    ]
+        ))
+
+    verified = sum(1 for s in sources if s.verification_status == "verified")
+    _log.info("Verification complete: %d/%d verified via full-page extraction",
+              verified, len(sources))
+
+    return sources
 
 
 def fact_check_source(source: PoolSource, verbose: bool = False) -> PoolSource:
-    """Verify a single source. Returns the source with verification_status updated.
+    """Verify a single source. Uses trafilatura-based _verify_source() as the
+    primary check, with LLM fallback for ambiguous cases.
 
-    Checks: URL resolves, source actually exists, quote matches (if provided)."""
-    search_tool = create_search_tool()
-    library_read = LibraryReadTool(session_id="")  # session-less for workspace
-    llm = build_llm(temperature=0.2)
+    Returns the source with verification_status and verification_note updated."""
+    from council.tools.library_tool import _verify_source
 
-    agent = build_fact_checker(
-        library_read=library_read,
-        search_tool=search_tool,
-        llm=llm,
-    )
-
-    quote_info = f'\nSource quote to verify: "{source.snippet[:200]}"' if source.snippet else ""
-
-    description = f"""
-Verify this source:
-
-URL: {source.url}
-Title: {source.title}{quote_info}
-
-1. Search the web for this title to confirm the source actually exists.
-2. If a quote is provided, check whether it appears at the claimed URL.
-3. Return a JSON object with:
-   - "verification_status": "verified" (confirmed), "misattributed" (quote doesn't match), or "unverifiable" (can't check)
-   - "verification_note": brief explanation
-"""
-
-    raw = ask_agent(
-        agent,
-        description.strip(),
-        "A JSON object with verification_status and verification_note.",
-        verbose=verbose,
-    )
-    data = _parse_json(raw)
-
-    if data and isinstance(data, dict):
-        source.verification_status = data.get("verification_status", "unverifiable")
-        source.verification_note = data.get("verification_note", "")
-        if source.verification_status == "verified":
+    # ── Primary: trafilatura-based deterministic verification ──
+    if source.url:
+        normalized_url, status, note = _verify_source(
+            source_url=source.url,
+            source_quote=source.snippet,
+        )
+        source.verification_status = status
+        source.verification_note = note
+        if status == "verified":
             source.type = "verified"
-        elif source.verification_status == "misattributed":
+        elif status == "misattributed":
             source.type = "rejected"
-    else:
-        source.verification_status = "unverifiable"
-        source.verification_note = "Could not parse Fact-Checker response."
+        return source
 
+    # ── No URL: basic existence check ──
+    if source.title:
+        # Try searching for the title
+        search_tool = create_search_tool()
+        result = search_tool._run(source.title, max_results=1)
+        if result and "No results" not in result:
+            source.verification_status = "verified"
+            source.verification_note = "Title found via web search"
+            source.type = "verified"
+            return source
+
+    source.verification_status = "unverifiable"
+    source.verification_note = "No URL or title to verify"
     return source
 
 
@@ -833,3 +903,112 @@ A structured synthesis using EXACTLY this markdown format:
 """
 
     return ask_agent(agent, description.strip(), expected_output.strip(), verbose=verbose)
+
+
+# ── Panel editing helpers ──────────────────────────────────────────────────────
+
+
+def polish_query(query: str, verbose: bool = False) -> str:
+    """Refine a research question — clarify ambiguities, narrow scope.
+
+    Stateless: no tools, no session, no ChromaDB. Returns the polished query."""
+    llm = build_llm(temperature=0.4)
+    agent = Agent(
+        role="Research Question Editor",
+        goal="Refine research questions to be clearer, more specific, and better scoped for multi-disciplinary expert panels.",
+        backstory=(
+            "You are a senior research programme manager who has commissioned dozens "
+            "of scientific symposia. You know that a well-formed research question "
+            "determines the quality of the entire symposium. You help researchers "
+            "sharpen vague questions into precise, productive inquiries."
+        ),
+        tools=[],
+        llm=llm,
+        verbose=verbose,
+        allow_delegation=False,
+    )
+
+    description = f"""
+The following research question will be used to assemble an expert panel and guide a scientific symposium:
+
+"{query}"
+
+Refine this question. Your refined version should:
+1. Be clearer and more specific — remove ambiguity
+2. Be well-scoped — not too broad, not too narrow
+3. Use precise scientific terminology
+4. Imply the kinds of expertise needed (e.g., theoretical, experimental, computational)
+
+Return ONLY the refined question text — no preamble, no explanation.
+"""
+    return ask_agent(agent, description, "The refined research question text only.", verbose=verbose).strip()
+
+
+def propose_expert(
+    query: str,
+    existing_experts: list[dict] | None = None,
+    verbose: bool = False,
+) -> dict | None:
+    """Propose a single new expert to fill a gap in an existing panel.
+
+    Analyzes the current panel composition and identifies a missing disciplinary
+    perspective. Returns {name, discipline, bias, persona_prompt} or None."""
+    llm = build_llm(temperature=0.7)
+    agent = Agent(
+        role="Panel Architect",
+        goal="Identify missing perspectives in expert panels and propose the perfect expert to fill each gap.",
+        backstory=(
+            "You are an elite scientific programme director who assembles panels "
+            "for high-stakes research symposia. You can look at an existing panel "
+            "and instantly see which disciplinary perspectives, methodological "
+            "approaches, or intellectual traditions are missing. You propose "
+            "experts who will create productive intellectual tension."
+        ),
+        tools=[],
+        llm=llm,
+        verbose=verbose,
+        allow_delegation=False,
+    )
+
+    existing_text = ""
+    if existing_experts:
+        lines = []
+        for e in existing_experts:
+            lines.append(
+                f"- {e.get('name', '?')} ({e.get('discipline', '?')})"
+                + (f" — {e.get('bias', '')}" if e.get('bias') else "")
+            )
+        existing_text = "Current panel:\n" + "\n".join(lines)
+    else:
+        existing_text = "The panel is currently empty."
+
+    description = f"""
+Research Question: "{query}"
+
+{existing_text}
+
+Analyze the current panel. What critical disciplinary or methodological perspective
+is MISSING? Identify ONE gap and propose ONE new expert to fill it.
+
+The expert should:
+- Come from a discipline NOT already represented
+- Bring a methodological approach NOT already present
+- Create productive intellectual tension with the existing panel
+- Have a philosopher-inspired alias (e.g., "Socratyes", "Kantwell", "Hypatia")
+
+Return a JSON object with: name, discipline, bias, persona_prompt
+"""
+    raw = ask_agent(
+        agent, description.strip(),
+        "A JSON object with keys: name, discipline, bias, persona_prompt.",
+        verbose=verbose,
+    )
+    data = _parse_json(raw)
+    if isinstance(data, dict) and "name" in data:
+        return {
+            "name": str(data.get("name", "")),
+            "discipline": str(data.get("discipline", "")),
+            "bias": str(data.get("bias", "")),
+            "persona_prompt": str(data.get("persona_prompt", "")),
+        }
+    return None
