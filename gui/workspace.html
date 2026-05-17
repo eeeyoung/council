@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>COUNCIL — The Academy</title>
+<title>SYMPOSIUM — The Academy</title>
 <link rel="stylesheet" href="/gui/workspace.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -12,11 +12,11 @@
   <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
   <aside id="sidebar">
     <div class="sidebar-header">
-      <h1>COUNCIL <span>✦</span></h1>
+      <h1>SYMPOSIUM <span>✦</span></h1>
       <div class="sidebar-ws-name" id="sidebar-ws-name">Select a workspace</div>
     </div>
     <div class="sidebar-section">
-      <div class="sidebar-section-label">Panels</div>
+      <div class="sidebar-section-label">Panels <span class="panels-edit-toggle" onclick="togglePanelEditMode()" title="Toggle panel edit mode">✎</span></div>
       <div id="sidebar-panels"></div>
       <button class="sidebar-btn" onclick="showNewPanelModal()">+ New Panel</button>
     </div>

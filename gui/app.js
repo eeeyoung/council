@@ -133,7 +133,7 @@ async function renderSessionPicker() {
             <div class="panel-editor" style="max-width:600px;margin:0 auto;padding:48px 0;">
                 <h2 style="margin-bottom:14px;">No sessions found</h2>
                 <p style="color:var(--text-muted);line-height:1.7;">
-                    Run the COUNCIL pipeline to produce output files, then start the server:
+                    Run the SYMPOSIUM pipeline to produce output files, then start the server:
                 </p>
                 <pre style="background:rgba(255,255,255,0.04);border:1px solid var(--border-glass);border-radius:8px;
                             padding:14px;margin-top:16px;font-size:13px;color:var(--accent-cyan);">uv run python -m council.server</pre>
