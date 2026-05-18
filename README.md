@@ -1,8 +1,5 @@
 <p align="center">
   <h1 align="center">🏛️ SYMPOSIUM</h1>
-  <p align="center">
-    <strong>SYnthetic Multi-agent Platform for Open Scientific Inquiry & Unified Modeling</strong>
-  </p>
 </p>
 
 <p align="center">
